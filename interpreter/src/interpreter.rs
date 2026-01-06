@@ -959,12 +959,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
             );
         }
         for dependant in mem::take(&mut element.dependants) {
-            let dependant_element = self.get_element(dependant.element_id);
-            if let ElementKey::Name(name) = dependant_element.key {
-                log::error!("resolve dependant: {}", &*self.id2str(name),);
-            } else {
-                log::error!("resolve dependant: {:?}", dependant.element_id.in_module,);
-            }
             self.resolve_element(dependant.element_id);
         }
         if let Some(remote_id) = &element.remote_id {
