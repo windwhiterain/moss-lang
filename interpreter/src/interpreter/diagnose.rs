@@ -23,5 +23,5 @@ pub enum Diagnostic {
     CanNotCallOn {
         source: UntypedNode<'static>,
         value: Value,
-    }
+    },
 }

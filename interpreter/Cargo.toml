@@ -16,7 +16,6 @@ slotmap = "1.0.7"
 smallvec = "1.15.1"
 strum = { version = "0.27.2", features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-tower-lsp = "0.20.0"
 tree-sitter = "0.25.10"
 tree-sitter-moss = { version = "0.1.0", path = "../tree-sitter-moss" }
 type-sitter = { version = "0.8.1", default-features = false }

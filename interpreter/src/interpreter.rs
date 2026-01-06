@@ -1,37 +1,61 @@
 use crate::erase_struct;
 use crate::interpreter::diagnose::Diagnostic;
-use crate::utils::async_lockfree_stack::Stack;
+use crate::interpreter::element::Dependant;
+use crate::interpreter::element::Element;
+use crate::interpreter::element::ElementAuthored;
+use crate::interpreter::element::ElementId;
+use crate::interpreter::element::ElementKey;
+use crate::interpreter::element::ElementRemote;
+use crate::interpreter::element::ElementRemoteMut;
+use crate::interpreter::element::LocalElementId;
+use crate::interpreter::element::LocalInModuleElementId;
+use crate::interpreter::element::RemoteElementId;
+use crate::interpreter::file::File;
+use crate::interpreter::file::FileId;
+use crate::interpreter::module::Module;
+use crate::interpreter::module::ModuleAuthored;
+use crate::interpreter::module::ModuleCell;
+use crate::interpreter::module::ModuleId;
+use crate::interpreter::module::ModuleRemote;
+use crate::interpreter::scope::LocalInModuleScopeId;
+use crate::interpreter::scope::LocalScopeId;
+use crate::interpreter::scope::RemoteScopeId;
+use crate::interpreter::scope::Scope;
+use crate::interpreter::scope::ScopeAuthored;
+use crate::interpreter::scope::ScopeId;
+use crate::interpreter::scope::ScopeRemote;
+use crate::interpreter::scope::ScopeSource;
+use crate::interpreter::thread::AddModuleDelayScope;
+use crate::interpreter::thread::Signal;
+use crate::interpreter::thread::Thread;
+use crate::interpreter::thread::ThreadId;
+use crate::interpreter::thread::ThreadMut;
+use crate::interpreter::thread::ThreadRemote;
+use crate::interpreter::value::Builtin;
+use crate::interpreter::value::ContextedValue;
+use crate::interpreter::value::TypedValue;
+use crate::interpreter::value::Value;
 use crate::utils::concurrent_string_interner::ConcurentInterner;
+use crate::utils::concurrent_string_interner::StringId;
 use crate::utils::erase;
 use crate::utils::erase_mut;
 use crate::utils::moss::BuiltinChild;
-use crossbeam::atomic::AtomicCell;
-use sharded_slab::Slab;
 use slotmap::SecondaryMap;
 use slotmap::SlotMap;
-use slotmap::new_key_type;
-use smallvec::SmallVec;
 use std::borrow::Cow;
-use std::cell::OnceCell;
-use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::fmt;
-use std::fs;
 use std::mem;
 use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::OnceLock;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::thread::available_parallelism;
-use strum::EnumIter;
 use tokio::sync::Notify;
+use tokio::sync::futures::Notified;
 use tokio::task::JoinSet;
 
 use crate::utils::moss;
-use tree_sitter::Parser;
 use type_sitter::HasChild;
 pub use type_sitter::Node;
 use type_sitter::NodeResult;
@@ -39,95 +63,17 @@ pub use type_sitter::UntypedNode;
 pub type Tree = type_sitter::Tree<moss::SourceFile<'static>>;
 
 pub mod diagnose;
+pub mod element;
+pub mod file;
+pub mod module;
+pub mod scope;
+pub mod thread;
+pub mod value;
 
 pub trait LocalId {
     type GlobalId;
     fn global(self, module: ModuleId) -> Self::GlobalId;
 }
-
-pub struct ModuleRemote {
-    pub scopes: Slab<ScopeRemote>,
-    pub elements: Slab<ElementRemote>,
-    pub root_scope: OnceLock<usize>,
-}
-
-pub struct ModuleCell {
-    pub scopes: SlotMap<LocalInModuleScopeId, Scope>,
-    pub elements: SlotMap<LocalInModuleElementId, Element>,
-    pub authored: Option<ScopeAuthored>,
-    pub dependants: Vec<LocalElementId>,
-    pub root_scope: OnceCell<LocalInModuleScopeId>,
-}
-
-impl ModuleCell {
-    fn has_parsed(&self) -> bool {
-        self.root_scope.get().is_some()
-    }
-}
-
-pub struct Module {
-    pub cell: UnsafeCell<ModuleCell>,
-    pub remote: ModuleRemote,
-}
-
-impl Module {
-    fn new(source: ScopeAuthored) -> Self {
-        Self {
-            cell: UnsafeCell::new(ModuleCell {
-                scopes: Default::default(),
-                elements: Default::default(),
-                authored: Some(source),
-                dependants: Default::default(),
-                root_scope: Default::default(),
-            }),
-            remote: ModuleRemote {
-                scopes: Default::default(),
-                elements: Default::default(),
-                root_scope: Default::default(),
-            },
-        }
-    }
-}
-
-new_key_type! {pub struct ModuleId;}
-
-pub struct Thread {
-    pub r#mut: UnsafeCell<ThreadMut>,
-    pub remote: ThreadRemote,
-}
-
-impl Thread {
-    pub fn new(module_ids: Vec<ModuleId>) -> Self {
-        Self {
-            r#mut: UnsafeCell::new(ThreadMut {
-                modules: module_ids,
-                add_module_delay: AddModuleDelay {
-                    files: Default::default(),
-                    scopes: Default::default(),
-                },
-            }),
-            remote: ThreadRemote {
-                channel: Arc::new(Stack::new()),
-            },
-        }
-    }
-}
-
-pub struct ThreadMut {
-    pub modules: Vec<ModuleId>,
-    pub add_module_delay: AddModuleDelay,
-}
-
-pub struct ThreadRemote {
-    pub channel: Arc<Stack<Signal>>,
-}
-
-pub enum Signal {
-    Depend(Depend),
-    Resolve(LocalElementId),
-}
-
-new_key_type! {pub struct ThreadId;}
 
 pub struct Depend {
     pub dependant: LocalElementId,
@@ -163,6 +109,8 @@ impl Interpreter {
                 module2thread: Default::default(),
                 threads: Default::default(),
                 strings: ConcurentInterner::new(),
+                workload: AtomicUsize::new(0),
+                workload_zero: Notify::new(),
             },
             single_thread: true,
         }
@@ -208,6 +156,7 @@ impl Interpreter {
         id
     }
     pub fn add_module(&mut self, authored: ModuleAuthored) -> ModuleId {
+        self.increase_work_load();
         match authored {
             ModuleAuthored::File { path } => {
                 let file_id = self.find_or_add_file(Cow::Owned(path));
@@ -233,7 +182,7 @@ impl Interpreter {
             }
         }
     }
-    pub fn create_threads(&mut self) {
+    pub async fn run(&mut self) {
         self.assert_single_thread();
         self.remote.strings.sync_from(&self.strings);
         let mut thread_num: usize = available_parallelism().unwrap().into();
@@ -261,46 +210,20 @@ impl Interpreter {
             thread_num -= 1;
         }
         self.single_thread = false;
-    }
-    pub async fn sync(&mut self) {
-        let wait_counter = Arc::new(AtomicUsize::new(0));
-        let notify = Arc::new(Notify::new());
         let mut set = JoinSet::new();
         for thread in self.remote.threads.keys() {
             let mut thread_interpreter = ThreadInterpreter {
                 interpreter: erase(self),
                 thread,
+                workload_zero: Some(erase(self).remote.workload_zero.notified()),
             };
-            let wait_counter = wait_counter.clone();
-            let notify = notify.clone();
-            set.spawn(async move { thread_interpreter.run(wait_counter, notify).await });
+            set.spawn(async move { thread_interpreter.run().await });
         }
         log::error!("join_all(");
         set.join_all().await;
         log::error!("join_all)");
         self.strings.sync_from(&self.remote.strings);
         self.single_thread = true;
-        for thread_id in erase(self).remote.threads.keys() {
-            let thread_remote = erase(self).get_thread_remote(thread_id);
-            loop {
-                let Some(signal) = thread_remote.channel.pop() else {
-                    break;
-                };
-                match signal {
-                    Signal::Depend(depend) => {
-                        self.depend_element(
-                            depend.dependant,
-                            ElementId::Local(depend.dependency),
-                            depend.node,
-                            false,
-                        );
-                    }
-                    Signal::Resolve(local_element_id) => {
-                        self.resolve_element(local_element_id);
-                    }
-                }
-            }
-        }
         for thread_id in erase(self).remote.threads.keys() {
             let thread = erase_mut(self).get_thread_mut(thread_id);
             for (path, dependants) in mem::take(&mut thread.add_module_delay.files) {
@@ -329,24 +252,23 @@ impl Interpreter {
             }
         }
     }
-    pub async fn run(&mut self) {
-        self.create_threads();
-        self.sync().await;
-    }
 }
 
 pub struct InterpreterRemote {
     pub module2thread: SecondaryMap<ModuleId, Option<ThreadId>>,
     pub threads: SlotMap<ThreadId, Thread>,
     pub strings: ConcurrentStringInterner,
+    pub workload: AtomicUsize,
+    pub workload_zero: Notify,
 }
 
-pub struct ThreadInterpreter<IP: Deref<Target = Interpreter>> {
+pub struct ThreadInterpreter<'a, IP: Deref<Target = Interpreter>> {
     pub interpreter: IP,
     pub thread: ThreadId,
+    pub workload_zero: Option<Notified<'a>>,
 }
 
-impl<IP: Deref<Target = Interpreter>> ThreadInterpreter<IP> {
+impl<'a, IP: Deref<Target = Interpreter>> ThreadInterpreter<'a, IP> {
     fn is_module_local(&self, module: ModuleId) -> bool {
         Some(self.thread) == self.interpreter.remote.module2thread[module]
     }
@@ -357,7 +279,7 @@ impl<IP: Deref<Target = Interpreter>> ThreadInterpreter<IP> {
             false
         }
     }
-    async fn run(&mut self, wait_counter: Arc<AtomicUsize>, notify: Arc<Notify>) {
+    async fn run(&mut self) {
         for module_id in erase_mut(self)
             .get_thread_mut(self.thread)
             .modules
@@ -388,15 +310,10 @@ impl<IP: Deref<Target = Interpreter>> ThreadInterpreter<IP> {
                         self.resolve_element(local_element_id);
                     }
                 }
+                self.decrease_work_load();
             } else {
-                let wait_count = wait_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                if wait_count >= self.interpreter.remote.threads.len() {
-                    notify.notify_waiters();
-                    return;
-                }
                 tokio::select! {
                     signal=thread.channel.async_pop()=>{
-                        wait_counter.fetch_sub(1, Ordering::Relaxed);
                         match signal {
                             Signal::Depend(depend) => {
                                 self.get_element_mut(depend.dependency)
@@ -410,416 +327,27 @@ impl<IP: Deref<Target = Interpreter>> ThreadInterpreter<IP> {
                                 self.resolve_element(local_element_id);
                             }
                         }
+                        self.decrease_work_load();
                     }
-                    _=notify.notified()=>{return;}
+                    _=mem::take(&mut self.workload_zero).unwrap()=>{return;}
                 }
             }
         }
     }
-}
-
-pub struct AddModuleDelay {
-    files: HashMap<PathBuf, Vec<LocalElementId>>,
-    scopes: Vec<AddModuleDelayScope>,
-}
-
-pub struct AddModuleDelayScope {
-    file: FileId,
-    scope: moss::Scope<'static>,
-    element: LocalElementId,
-}
-
-pub enum ModuleAuthored {
-    File {
-        path: PathBuf,
-    },
-    Scope {
-        file: FileId,
-        source: moss::Scope<'static>,
-    },
 }
 
 pub type StringInterner = crate::utils::concurrent_string_interner::Interner;
 
 pub type ConcurrentStringInterner = crate::utils::concurrent_string_interner::ConcurentInterner;
 
-pub type StringId = crate::utils::concurrent_string_interner::StringId;
-
-#[derive(Clone, Copy)]
-pub enum ScopeSource {
-    Scope(moss::Scope<'static>),
-    File(moss::SourceFile<'static>),
-}
-
-#[derive(Clone, Copy)]
-pub struct ScopeAuthored {
-    source: ScopeSource,
-    file: FileId,
-}
-
-new_key_type! {pub struct LocalInModuleScopeId;}
-
-#[derive(Clone, Copy, Hash)]
-pub struct LocalScopeId {
-    pub in_module: LocalInModuleScopeId,
-    pub module: ModuleId,
-}
-
-#[derive(Clone, Copy, Hash)]
-pub struct RemoteScopeId {
-    in_module: usize,
-    module: ModuleId,
-}
-
-#[derive(Clone, Copy, Hash)]
-pub struct ScopeId {
-    local: LocalScopeId,
-    remote: Option<usize>,
-}
-
-impl ScopeId {
-    pub fn get_remote(&self) -> Option<RemoteScopeId> {
-        Some(RemoteScopeId {
-            in_module: self.remote?,
-            module: self.local.module,
-        })
-    }
-    pub fn from_local(interpreter: &(impl InterpreterLike + ?Sized), local: LocalScopeId) -> Self {
-        let scope = interpreter.get_scope(local);
-        Self {
-            local,
-            remote: scope.remote_id,
-        }
-    }
-    pub fn get_module(&self) -> ModuleId {
-        self.local.module
-    }
-}
-
-impl LocalId for LocalInModuleScopeId {
-    type GlobalId = LocalScopeId;
-
-    fn global(self, module: ModuleId) -> Self::GlobalId {
-        Self::GlobalId {
-            in_module: self,
-            module,
-        }
-    }
-}
-
-pub struct ScopeRemote {
-    elements: HashMap<StringId, usize>,
-    parent: Option<usize>,
-    local_id: LocalInModuleScopeId,
-}
-
-pub struct Scope {
-    pub elements: HashMap<StringId, LocalInModuleElementId>,
-    pub parent: Option<LocalInModuleScopeId>,
-    pub children: Vec<LocalInModuleScopeId>,
-    pub authored: Option<ScopeAuthored>,
-    pub remote_id: Option<usize>,
-    pub diagnoistics: Vec<Diagnostic>,
-    pub module: ModuleId,
-}
-
-impl Scope {
-    fn new(
-        parent: Option<LocalInModuleScopeId>,
-        authored: Option<ScopeAuthored>,
-        module: ModuleId,
-    ) -> Self {
-        Self {
-            elements: Default::default(),
-            parent,
-            children: Default::default(),
-            authored,
-            remote_id: None,
-            diagnoistics: Default::default(),
-            module,
-        }
-    }
-    pub fn get_file(&self) -> Option<FileId> {
-        Some(self.authored?.file)
-    }
-}
-
 pub enum Location {
     Element(LocalElementId),
     Scope(LocalScopeId),
 }
 
-#[derive(Clone, Copy)]
-pub struct Dependant {
-    element_id: LocalElementId,
-    node: UntypedNode<'static>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum ElementKey {
-    Name(StringId),
-    Temp,
-}
-
-new_key_type! {pub struct LocalInModuleElementId;}
-
-#[derive(Clone, Copy, Hash, PartialEq)]
-pub struct LocalElementId {
-    in_module: LocalInModuleElementId,
-    module: ModuleId,
-}
-
-#[derive(Clone, Copy, Hash, PartialEq)]
-pub struct RemoteElementId {
-    in_module: usize,
-    module: ModuleId,
-}
-
-#[derive(Clone, Copy, Hash, PartialEq)]
-pub enum ElementId {
-    Local(LocalElementId),
-    Remote(RemoteElementId),
-}
-
-impl LocalId for LocalInModuleElementId {
-    type GlobalId = LocalElementId;
-
-    fn global(self, module: ModuleId) -> Self::GlobalId {
-        Self::GlobalId {
-            in_module: self,
-            module,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct ElementRemoteMut {
-    value: TypedValue,
-    resolved: bool,
-}
-
-pub struct ElementRemote {
-    r#mut: AtomicCell<ElementRemoteMut>,
-    local_id: LocalInModuleElementId,
-}
-
-impl ElementRemote {
-    pub fn new(local_id: LocalInModuleElementId) -> Self {
-        Self {
-            r#mut: AtomicCell::new(ElementRemoteMut {
-                value: TypedValue::err(),
-                resolved: false,
-            }),
-            local_id,
-        }
-    }
-}
-
-pub struct Element {
-    pub key: ElementKey,
-    pub resolved_value: TypedValue,
-    pub raw_value: Value,
-    pub scope: LocalInModuleScopeId,
-    pub dependency_count: i64,
-    pub dependants: SmallVec<[Dependant; 4]>,
-    pub resolved: bool,
-    pub authored: Option<ElementAuthored>,
-    pub remote_id: Option<usize>,
-    pub diagnoistics: Vec<Diagnostic>,
-}
-
-pub struct ElementAuthored {
-    pub value_node: moss::Value<'static>,
-    pub key_node: Option<moss::Name<'static>>,
-}
-
-impl Element {
-    fn new<'tree>(key: ElementKey, scope: LocalInModuleScopeId) -> Self {
-        Self {
-            key,
-            resolved_value: TypedValue::err(),
-            raw_value: Value::Err,
-            scope,
-            dependency_count: 0,
-            dependants: Default::default(),
-            authored: None,
-            resolved: false,
-            remote_id: None,
-            diagnoistics: Default::default(),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct TypedValue {
-    pub value: Value,
-    pub r#type: Value,
-}
-
-impl TypedValue {
-    pub fn err() -> Self {
-        Self {
-            value: Value::Err,
-            r#type: Value::Err,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum Value {
-    Int(i64),
-    IntTy,
-    String(StringId),
-    StringTy,
-    Scope(ScopeId),
-    ScopeTy,
-    TyTy,
-    Builtin(Builtin),
-    Name {
-        name: StringId,
-        scope: LocalScopeId,
-        node: moss::Name<'static>,
-    },
-    Find {
-        value: LocalElementId,
-        key: StringId,
-        key_source: moss::Name<'static>,
-        source: moss::Find<'static>,
-    },
-    Call {
-        func: LocalElementId,
-        param: LocalElementId,
-        source: moss::Call<'static>,
-    },
-    Err,
-}
-
-pub struct ContextedValue<'a, T: InterpreterLike + ?Sized> {
-    pub value: &'a Value,
-    pub ctx: &'a T,
-}
-
-impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self.value {
-            Value::Int(x) => write!(f, "{x}"),
-            Value::IntTy => write!(f, "Int"),
-            Value::Scope(scope_id) => {
-                let local_scope_id = scope_id.local;
-                let collection = self.ctx.get_scope(local_scope_id);
-                write!(f, "{{")?;
-                for (key, element) in &collection.elements {
-                    let element = self.ctx.get_element(element.global(local_scope_id.module));
-                    write!(
-                        f,
-                        "{}: {}, ",
-                        self.ctx.id2str(*key).deref(),
-                        ContextedValue {
-                            value: &element.resolved_value.value,
-                            ctx: self.ctx
-                        }
-                    )?;
-                }
-                write!(f, "}}")
-            }
-            Value::ScopeTy => write!(f, "Scope"),
-            Value::TyTy => write!(f, "Type"),
-            Value::Builtin(builtin) => write!(f, "@{}", builtin),
-            Value::Name { name, scope, .. } => {
-                write!(f, "{}", self.ctx.id2str(name).deref())
-            }
-            Value::Find {
-                value: element,
-                key,
-                ..
-            } => {
-                let element = self.ctx.get_element(element);
-                write!(
-                    f,
-                    "{}.{}",
-                    ContextedValue {
-                        value: &element.resolved_value.value,
-                        ctx: self.ctx
-                    },
-                    self.ctx.id2str(key).deref()
-                )
-            }
-            Value::Call { func, param, .. } => {
-                let func_element = self.ctx.get_element(func);
-                let param_element = self.ctx.get_element(param);
-                write!(
-                    f,
-                    "({} {})",
-                    ContextedValue {
-                        value: &func_element.resolved_value.value,
-                        ctx: self.ctx
-                    },
-                    ContextedValue {
-                        value: &param_element.resolved_value.value,
-                        ctx: self.ctx
-                    }
-                )
-            }
-            Value::Err => write!(f, "Err"),
-            Value::String(string) => {
-                write!(f, "{}", self.ctx.id2str(string).deref())
-            }
-            Value::StringTy => write!(f, "String"),
-        }
-    }
-}
-
-pub struct File {
-    pub text: String,
-    pub parser: Parser,
-    pub tree: Tree,
-    pub is_module: Option<ModuleId>,
-    pub path: PathBuf,
-}
-
-new_key_type! {pub struct FileId;}
-
-impl File {
-    fn new(path: PathBuf) -> Self {
-        let text = fs::read_to_string(&path).unwrap();
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_moss::LANGUAGE.into())
-            .unwrap();
-        let tree = Tree::wrap(parser.parse(&text, None).unwrap());
-        Self {
-            text,
-            parser,
-            tree,
-            is_module: None,
-            path,
-        }
-    }
-    pub fn update(&mut self) {
-        self.text = fs::read_to_string(&self.path).unwrap();
-        self.tree = Tree::wrap(self.parser.parse(&self.text, None).unwrap());
-        self.is_module = None;
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum Builtin {
-    If,
-    Add,
-    Mod,
-}
-
-impl fmt::Display for Builtin {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Builtin::If => write!(f, "if"),
-            Builtin::Add => write!(f, "add"),
-            Builtin::Mod => write!(f, "mod"),
-        }
-    }
-}
-
 pub trait InterpreterLikeMut: InterpreterLike {
+    fn increase_work_load(&mut self);
+    fn decrease_work_load(&mut self) -> usize;
     fn str2id(&mut self, str: &str) -> StringId;
     fn get_node_str_id<'tree>(&mut self, node: &impl Node<'tree>, file: FileId) -> StringId {
         let str = erase(self.get_node_str(node, file));
@@ -858,6 +386,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             for element in module.elements.keys() {
                 self.run_element(element.global(module_id));
             }
+            self.decrease_work_load();
         }
     }
     fn depend_module_raw(
@@ -1563,7 +1092,7 @@ impl InterpreterLike for Interpreter {
     }
 }
 
-impl<IP: Deref<Target = Interpreter>> InterpreterLike for ThreadInterpreter<IP> {
+impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadInterpreter<'a, IP> {
     fn id2str(&self, id: StringId) -> impl Deref<Target = str> {
         self.interpreter.remote.strings.resolve(id)
     }
@@ -1702,9 +1231,19 @@ impl InterpreterLikeMut for Interpreter {
     ) -> Option<ModuleId> {
         Some(self.add_module(authored))
     }
+
+    fn increase_work_load(&mut self) {
+        *self.remote.workload.get_mut() += 1;
+    }
+
+    fn decrease_work_load(&mut self) -> usize {
+        let workload = self.remote.workload.get_mut();
+        *workload -= 1;
+        *workload
+    }
 }
 
-impl<IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpreter<IP> {
+impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpreter<'a, IP> {
     fn str2id(&mut self, str: &str) -> StringId {
         self.interpreter.remote.strings.get_or_intern(str)
     }
@@ -1767,17 +1306,19 @@ impl<IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpreter<I
                             dependency: local_element_id,
                             node,
                         }));
+                        self.increase_work_load();
                     }
                 }
             }
             ElementId::Remote(remote_element_id) => {
-                let dependency = self.get_element_remote(remote_element_id);
-                if let Some(thread) = self.get_thread_remote_of(remote_element_id.module) {
+                let dependency = erase(self).get_element_remote(remote_element_id);
+                if let Some(thread) = erase(self).get_thread_remote_of(remote_element_id.module) {
                     thread.channel.push(Signal::Depend(Depend {
                         dependant: dependant_id,
                         dependency: dependency.deref().local_id.global(remote_element_id.module),
                         node,
                     }));
+                    self.increase_work_load();
                 }
             }
         }
@@ -1793,6 +1334,7 @@ impl<IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpreter<I
         } else {
             let thread = self.get_thread_remote(thread);
             thread.channel.push(Signal::Resolve(id));
+            self.increase_work_load();
         }
     }
 
@@ -1837,5 +1379,25 @@ impl<IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpreter<I
             }
         }
         None
+    }
+
+    fn increase_work_load(&mut self) {
+        self.interpreter
+            .remote
+            .workload
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn decrease_work_load(&mut self) -> usize {
+        let ret = self
+            .interpreter
+            .remote
+            .workload
+            .fetch_sub(1, Ordering::Relaxed)
+            - 1;
+        if ret == 0 {
+            self.interpreter.remote.workload_zero.notify_waiters();
+        }
+        ret
     }
 }

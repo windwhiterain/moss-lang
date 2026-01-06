@@ -20,10 +20,9 @@ use tower_lsp::{
     },
 };
 
-use 
-    moss_lang_interpreter::interpreter::{
-         ContextedValue, FileId, Interpreter, InterpreterLike, InterpreterLikeMut, LocalId, LocalScopeId, ModuleAuthored, Node, StringInterner, UntypedNode, diagnose::Diagnostic
-    };
+use moss_lang_interpreter::interpreter::{
+    Interpreter, InterpreterLike, InterpreterLikeMut, LocalId, Node, StringInterner, UntypedNode, diagnose::Diagnostic, file::FileId, module::ModuleAuthored, scope::LocalScopeId, value::ContextedValue
+};
 
 pub struct LanguageServer {
     pub client: Client,
