@@ -152,6 +152,14 @@ impl LanguageServer {
                                 DiagnosticSeverity::ERROR,
                             ));
                     }
+                    Diagnostic::PathError { source } => {
+                        self.lsp_diagnostics
+                            .push(self.language_server.make_diagnostic(
+                                *source,
+                                "path error",
+                                DiagnosticSeverity::ERROR,
+                            ));
+                    }
                 };
             }
             fn traverse(&mut self, scope_id: LocalScopeId) {

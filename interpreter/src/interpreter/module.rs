@@ -28,11 +28,15 @@ pub struct ModuleCell {
     pub authored: Option<ScopeAuthored>,
     pub dependants: Vec<LocalElementId>,
     pub root_scope: OnceCell<LocalInModuleScopeId>,
+    pub unresolved_count: usize,
 }
 
 impl ModuleCell {
     pub fn has_parsed(&self) -> bool {
         self.root_scope.get().is_some()
+    }
+    pub fn is_resolved(&self) -> bool {
+        self.unresolved_count == 0
     }
 }
 
@@ -50,6 +54,7 @@ impl Module {
                 authored: Some(source),
                 dependants: Default::default(),
                 root_scope: Default::default(),
+                unresolved_count: 1,
             }),
             remote: ModuleRemote {
                 scopes: Default::default(),

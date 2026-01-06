@@ -40,6 +40,8 @@ use crate::utils::concurrent_string_interner::StringId;
 use crate::utils::erase;
 use crate::utils::erase_mut;
 use crate::utils::moss::BuiltinChild;
+use crate::utils::secondary_linked_list::Link;
+use crate::utils::secondary_linked_list::List;
 use slotmap::SecondaryMap;
 use slotmap::SlotMap;
 use std::borrow::Cow;
@@ -89,6 +91,7 @@ pub struct Interpreter {
     pub uri2file: hashbrown::HashMap<PathBuf, FileId>,
     pub root_scope: Option<LocalInModuleScopeId>,
     pub modules: SlotMap<ModuleId, Module>,
+    pub unresolved_modules: List<ModuleId>,
     pub remote: InterpreterRemote,
     pub single_thread: bool,
 }
@@ -105,6 +108,7 @@ impl Interpreter {
             uri2file: Default::default(),
             root_scope: None,
             modules: Default::default(),
+            unresolved_modules: Default::default(),
             remote: InterpreterRemote {
                 module2thread: Default::default(),
                 threads: Default::default(),
@@ -121,6 +125,7 @@ impl Interpreter {
             file.is_module = None;
         }
         self.modules.clear();
+        self.unresolved_modules.clear();
         self.remote.module2thread.clear();
         self.remote.threads.clear();
     }
@@ -156,8 +161,7 @@ impl Interpreter {
         id
     }
     pub fn add_module(&mut self, authored: ModuleAuthored) -> ModuleId {
-        self.increase_work_load();
-        match authored {
+        let module = match authored {
             ModuleAuthored::File { path } => {
                 let file_id = self.find_or_add_file(Cow::Owned(path));
                 let file = erase_mut(self).get_file(file_id);
@@ -177,80 +181,94 @@ impl Interpreter {
                     source,
                     file: file_id,
                 });
-
                 module
             }
-        }
+        };
+        self.unresolved_modules.push(module);
+        self.increase_work_load();
+        module
     }
     pub async fn run(&mut self) {
+        log::error!("run(");
         self.assert_single_thread();
-        self.remote.strings.sync_from(&self.strings);
-        let mut thread_num: usize = available_parallelism().unwrap().into();
-        let mut module_num = self.modules.len();
-        let mut modules = self.modules.iter_mut();
         loop {
-            let mut module_per_thread = module_num.div_ceil(thread_num);
-            if module_per_thread == 0 {
+            self.remote.strings.sync_from(&self.strings);
+            let mut thread_num: usize = available_parallelism().unwrap().into();
+            let mut module_num = self.unresolved_modules.len();
+            if module_num == 0 {
                 break;
             }
-            let mut module_ids = vec![];
+            let mut modules = self.unresolved_modules.iter();
             loop {
-                let (id, module) = modules.next().unwrap();
-                module_ids.push(id);
-                let thread_id = self.remote.threads.insert(Thread::new(Default::default()));
-                self.remote.module2thread.insert(id, Some(thread_id));
-                module_per_thread -= 1;
-                module_num -= 1;
+                let mut module_per_thread = module_num.div_ceil(thread_num);
                 if module_per_thread == 0 {
-                    let thread = &mut self.remote.threads[thread_id];
-                    thread.r#mut.get_mut().modules = module_ids;
                     break;
                 }
+                let mut module_ids = vec![];
+                loop {
+                    let id = modules.next().unwrap();
+                    module_ids.push(id);
+                    let thread_id = self.remote.threads.insert(Thread::new(Default::default()));
+                    self.remote.module2thread.insert(id, Some(thread_id));
+                    module_per_thread -= 1;
+                    module_num -= 1;
+                    if module_per_thread == 0 {
+                        let thread = &mut self.remote.threads[thread_id];
+                        thread.r#mut.get_mut().modules = module_ids;
+                        break;
+                    }
+                }
+                thread_num -= 1;
             }
-            thread_num -= 1;
-        }
-        self.single_thread = false;
-        let mut set = JoinSet::new();
-        for thread in self.remote.threads.keys() {
-            let mut thread_interpreter = ThreadInterpreter {
-                interpreter: erase(self),
-                thread,
-                workload_zero: Some(erase(self).remote.workload_zero.notified()),
-            };
-            set.spawn(async move { thread_interpreter.run().await });
-        }
-        log::error!("join_all(");
-        set.join_all().await;
-        log::error!("join_all)");
-        self.strings.sync_from(&self.remote.strings);
-        self.single_thread = true;
-        for thread_id in erase(self).remote.threads.keys() {
-            let thread = erase_mut(self).get_thread_mut(thread_id);
-            for (path, dependants) in mem::take(&mut thread.add_module_delay.files) {
-                let file_id = self.find_or_add_file(Cow::Owned(path));
-                let file = self.get_file(file_id);
-                let module_id = if let Some(module) = file.is_module {
-                    module
-                } else {
-                    self.add_module_raw(ScopeAuthored {
-                        source: ScopeSource::File(erase_struct!(file.tree.root_node().unwrap())),
-                        file: file_id,
-                    })
+            self.single_thread = false;
+            let mut set = JoinSet::new();
+            for thread in self.remote.threads.keys() {
+                let mut thread_interpreter = ThreadInterpreter {
+                    interpreter: erase(self),
+                    thread,
+                    workload_zero: Some(erase(self).remote.workload_zero.notified()),
                 };
-                let module = self.get_module_mut(module_id);
-                for dependant in dependants.iter().copied() {
-                    module.dependants.push(dependant);
+                set.spawn(async move { thread_interpreter.run().await });
+            }
+            log::error!("join_all(");
+            set.join_all().await;
+            log::error!("join_all)");
+            self.strings.sync_from(&self.remote.strings);
+            self.single_thread = true;
+            erase_mut(self)
+                .unresolved_modules
+                .retain(|key| self.get_module(key).is_resolved());
+            for thread_id in erase(self).remote.threads.keys() {
+                let thread = erase_mut(self).get_thread_mut(thread_id);
+                for (path, dependants) in mem::take(&mut thread.add_module_delay.files) {
+                    let file_id = self.find_or_add_file(Cow::Owned(path));
+                    let file = self.get_file(file_id);
+                    let module_id = if let Some(module) = file.is_module {
+                        module
+                    } else {
+                        self.add_module_raw(ScopeAuthored {
+                            source: ScopeSource::File(erase_struct!(
+                                file.tree.root_node().unwrap()
+                            )),
+                            file: file_id,
+                        })
+                    };
+                    let module = self.get_module_mut(module_id);
+                    for dependant in dependants.iter().copied() {
+                        module.dependants.push(dependant);
+                    }
+                }
+                for scope in mem::take(&mut thread.add_module_delay.scopes) {
+                    let module_id = self.add_module_raw(ScopeAuthored {
+                        source: ScopeSource::Scope(scope.scope),
+                        file: scope.file,
+                    });
+                    let module = self.get_module_mut(module_id);
+                    module.dependants.push(scope.element);
                 }
             }
-            for scope in mem::take(&mut thread.add_module_delay.scopes) {
-                let module_id = self.add_module_raw(ScopeAuthored {
-                    source: ScopeSource::Scope(scope.scope),
-                    file: scope.file,
-                });
-                let module = self.get_module_mut(module_id);
-                module.dependants.push(scope.element);
-            }
         }
+        log::error!("run)");
     }
 }
 
@@ -280,12 +298,9 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadInterpreter<'a, IP> {
         }
     }
     async fn run(&mut self) {
-        for module_id in erase_mut(self)
-            .get_thread_mut(self.thread)
-            .modules
-            .iter()
-            .copied()
-        {
+        let modules = &mut erase_mut(self).get_thread_mut(self.thread).modules;
+        let mut unresolved_num = modules.len();
+        for module_id in modules.iter().copied() {
             let module = erase_mut(self.get_module_mut(module_id));
             if !module.has_parsed() {
                 self.run_module(module_id);
@@ -293,9 +308,15 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadInterpreter<'a, IP> {
                     self.resolve_element(dependant);
                 }
             }
+            if module.is_resolved() {
+                unresolved_num -= 1;
+            }
         }
         let thread = erase(self.get_thread_remote(self.thread));
         loop {
+            if unresolved_num == 0 {
+                return;
+            }
             if let Some(signal) = thread.channel.pop() {
                 match signal {
                     Signal::Depend(depend) => {
@@ -365,7 +386,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
     }
 
     fn add_element_raw(&mut self, element: Element, module: ModuleId) -> LocalInModuleElementId {
-        self.get_module_mut(module).elements.insert(element)
+        let module = self.get_module_mut(module);
+        module.unresolved_count += 1;
+        module.elements.insert(element)
     }
     fn add_scope_raw(&mut self, scope: Scope, module: ModuleId) -> LocalInModuleScopeId {
         self.get_module_mut(module).scopes.insert(scope)
@@ -386,6 +409,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             for element in module.elements.keys() {
                 self.run_element(element.global(module_id));
             }
+            module.unresolved_count -= 1;
             self.decrease_work_load();
         }
     }
@@ -617,9 +641,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
             ElementKey::Temp => new_id(self),
         };
         let element = erase_mut(self.get_element_mut(id));
-        if element.authored.is_some() {
-            return Err(());
-        }
         element.raw_value = self
             .parse_value(Ok(authored.value_node), id, file)
             .unwrap_or(Value::Err);
@@ -798,11 +819,11 @@ pub trait InterpreterLikeMut: InterpreterLike {
             }
             Value::Call {
                 func,
-                param,
+                param: param_id,
                 source,
             } => {
                 let func = self.depend_child_element_value(element_id, func)?;
-                let param = self.depend_child_element_value(element_id, param)?;
+                let param = self.depend_child_element_value(element_id, param_id)?;
                 match func.value {
                     Value::Builtin(builtin) => match builtin {
                         Builtin::If => todo!(),
@@ -811,6 +832,10 @@ pub trait InterpreterLikeMut: InterpreterLike {
                             Value::String(string_id) => {
                                 let str = erase(self).id2str(string_id);
                                 let path = self.get_source_path().join(str.deref());
+                                if !path.exists(){
+                                    let param = self.get_element(param_id);
+                                    self.diagnose(Location::Element(element_id), Diagnostic::PathError { source: param.authored.as_ref().unwrap().value_node.upcast() });
+                                }
                                 let module_id =
                                     self.depend_module(ModuleAuthored::File { path }, element_id)?;
                                 if self.is_module_local(module_id) {
@@ -887,6 +912,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
         }
 
         element.resolved = true;
+        let module = self.get_module_mut(element_id.module);
+        module.unresolved_count -= 1;
         if let ElementKey::Name(name) = element.key {
             log::error!(
                 "run element): {} = {}",

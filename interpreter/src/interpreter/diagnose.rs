@@ -24,4 +24,7 @@ pub enum Diagnostic {
         source: UntypedNode<'static>,
         value: Value,
     },
+    PathError{
+        source: UntypedNode<'static>,
+    }
 }
