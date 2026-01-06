@@ -1,0 +1,25 @@
+[package]
+name = "moss-lang-interpreter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crossbeam = "0.8.4"
+dashmap = "6.1.0"
+env_logger = "0.11.8"
+hashbrown = { workspace = true }
+lockfree = "0.5.1"
+log = { workspace = true }
+parking_lot = "0.12.5"
+sharded-slab = "0.1.7"
+slotmap = "1.0.7"
+smallvec = "1.15.1"
+strum = { version = "0.27.2", features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tower-lsp = "0.20.0"
+tree-sitter = "0.25.10"
+tree-sitter-moss = { version = "0.1.0", path = "../tree-sitter-moss" }
+type-sitter = { version = "0.8.1", default-features = false }
+
+[build-dependencies]
+cc = "*"

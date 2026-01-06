@@ -1,0 +1,17 @@
+[package]
+name = "moss-language-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+log = {workspace = true}
+env_logger = "0.11.8"
+hashbrown = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+] }
+tower-lsp = "0.20.0"
+moss-lang-interpreter = {path = "../interpreter"}
+
+[build-dependencies]
+cc = "*"
