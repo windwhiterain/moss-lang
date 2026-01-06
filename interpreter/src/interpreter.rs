@@ -91,7 +91,7 @@ pub struct Interpreter {
     pub source_path: PathBuf,
     pub strings: StringInterner,
     pub files: SlotMap<FileId, File>,
-    pub uri2file: hashbrown::HashMap<PathBuf, FileId>,
+    pub path2file: hashbrown::HashMap<PathBuf, FileId>,
     pub root_scope: Option<LocalInModuleScopeId>,
     pub modules: SlotMap<ModuleId, Module>,
     pub unresolved_modules: List<ModuleId>,
@@ -104,11 +104,11 @@ unsafe impl Sync for Interpreter {}
 impl Interpreter {
     pub fn new(workspace_path: PathBuf) -> Self {
         Self {
-            workspace_path: workspace_path.clone(),
-            source_path: workspace_path.join("src"),
+            workspace_path: workspace_path,
+            source_path: "src".into(),
             strings: StringInterner::new(),
             files: Default::default(),
-            uri2file: Default::default(),
+            path2file: Default::default(),
             root_scope: None,
             modules: Default::default(),
             unresolved_modules: Default::default(),
@@ -139,16 +139,16 @@ impl Interpreter {
         &mut self.files[id]
     }
     pub fn find_file(&self, path: impl AsRef<Path>) -> Option<FileId> {
-        self.uri2file.get(path.as_ref()).copied()
+        self.path2file.get(path.as_ref()).copied()
     }
     pub fn find_or_add_file(&mut self, path: Cow<PathBuf>) -> FileId {
-        match self.uri2file.raw_entry_mut().from_key(path.as_path()) {
+        match erase_mut(self).path2file.raw_entry_mut().from_key(path.as_path()) {
             hashbrown::hash_map::RawEntryMut::Occupied(raw_occupied_entry_mut) => {
                 *raw_occupied_entry_mut.get()
             }
             hashbrown::hash_map::RawEntryMut::Vacant(raw_vacant_entry_mut) => {
-                let path = path.to_path_buf();
-                let file = File::new(path.clone());
+                let path = path.into_owned();
+                let file = File::new(path.clone(),self);
                 let file_id = self.files.insert(file);
                 raw_vacant_entry_mut.insert(path, file_id);
                 file_id
@@ -862,7 +862,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                     .get_source_path()
                                     .join(str.deref())
                                     .with_extension(SRC_FILE_EXTENSION);
-                                if !path.exists() {
+                                let abs_path = self.get_worksapce_path().join(&path);
+                                if !abs_path.exists() {
                                     let param = self.get_element(param_id);
                                     self.diagnose(
                                         Location::Element(element_id),
@@ -1144,7 +1145,7 @@ impl InterpreterLike for Interpreter {
     }
 
     fn find_file(&self, path: impl AsRef<Path>) -> Option<FileId> {
-        self.uri2file.get(path.as_ref()).copied()
+        self.path2file.get(path.as_ref()).copied()
     }
 }
 

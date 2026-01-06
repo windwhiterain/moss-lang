@@ -1,3 +1,4 @@
 a = mod #a;
-b = a.c;
-q = 3;
+b = mod #b;
+a1 = a.a;
+b1 = b.b;

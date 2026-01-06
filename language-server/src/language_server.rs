@@ -20,9 +20,9 @@ use tower_lsp::{
     },
 };
 
-use moss_lang_interpreter::interpreter::{
+use moss_lang_interpreter::{interpreter::{
     Interpreter, InterpreterLike, InterpreterLikeMut, LocalId, Node, StringInterner, UntypedNode, diagnose::Diagnostic, file::FileId, module::ModuleAuthored, scope::LocalScopeId, value::ContextedValue
-};
+}, utils::erase_mut};
 
 pub struct LanguageServer {
     pub client: Client,
@@ -351,8 +351,8 @@ impl LanguageServerLike for LanguageServer {
             let Some(file) = interpreter.find_file(path) else {
                 return;
             };
-            let file = interpreter.get_file_mut(file);
-            file.update();
+            let file = erase_mut(interpreter).get_file_mut(file);
+            file.update(interpreter);
         }
         self.run().await;
     }
