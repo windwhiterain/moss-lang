@@ -1,2 +1,2 @@
-b = mod #b;
+b = mod "b";
 a = b.b;

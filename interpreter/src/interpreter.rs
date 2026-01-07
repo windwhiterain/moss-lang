@@ -511,7 +511,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         &mut self,
         node: NodeResult<'static, moss::Value<'static>>,
         element_id: LocalElementId,
-        file: FileId,
+        file_id: FileId,
     ) -> Option<Value> {
         let node = self.grammar_error(Location::Element(element_id), node)?;
         let node_child = self.grammar_error(Location::Element(element_id), node.child())?;
@@ -519,7 +519,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let scope_id = element.scope.global(element_id.module);
         let value = match node_child {
             moss::ValueChild::Bracket(bracket) => self
-                .parse_value(bracket.value(), element_id, file)
+                .parse_value(bracket.value(), element_id, file_id)
                 .unwrap_or(Value::Err),
             moss::ValueChild::Call(call) => {
                 let func = self.grammar_error(Location::Element(element_id), call.func())?;
@@ -532,7 +532,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                             value_node: func,
                             key_node: None,
                         },
-                        file,
+                        file_id,
                     )
                     .unwrap();
                 let param_element = self
@@ -543,7 +543,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                             value_node: param,
                             key_node: None,
                         },
-                        file,
+                        file_id,
                     )
                     .unwrap();
                 Value::Call {
@@ -558,7 +558,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     Some(scope_id.in_module),
                     Some(ScopeAuthored {
                         source: ScopeSource::Scope(scope),
-                        file,
+                        file: file_id,
                     }),
                     element_id.module,
                 )
@@ -575,21 +575,21 @@ pub trait InterpreterLikeMut: InterpreterLike {
                             value_node: value,
                             key_node: None,
                         },
-                        file,
+                        file_id,
                     )
                     .unwrap();
                 Value::Find {
                     value: element,
-                    key: self.get_node_str_id(&name, file),
+                    key: self.get_node_str_id(&name, file_id),
                     key_source: name,
                     source: find,
                 }
             }
             moss::ValueChild::Int(int) => {
-                Value::Int(self.get_node_str(&int, file).parse().unwrap())
+                Value::Int(self.get_node_str(&int, file_id).parse().unwrap())
             }
             moss::ValueChild::Name(name) => {
-                let string_id = self.get_node_str_id(&name, file);
+                let string_id = self.get_node_str_id(&name, file_id);
                 Value::Name {
                     name: string_id,
                     scope: scope_id,
@@ -597,8 +597,37 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 }
             }
             moss::ValueChild::String(string) => {
-                let name = self.grammar_error(Location::Element(element_id), string.value())?;
-                Value::String(self.get_node_str_id(&name, file))
+                let mut cursor = erase_struct!(self.get_file(file_id).tree.walk());
+                let mut value:Option<Cow<str>> = None;
+                for content in string.contents(erase_mut(&mut cursor)){
+                    let content =  erase_mut(self).grammar_error(Location::Element(element_id), content)?;
+                    let content_value =  match erase_mut(self).grammar_error(Location::Element(element_id), content.child())?{
+                        moss::StringContentChild::StringEscape(string_escape) => {
+                            match erase(self).get_node_str(&string_escape, file_id){
+                                "\\\""=>Some("\""),
+                                "\\\\"=>Some("\\"),
+                                "\\n"=>Some("\n"),
+                                "\\t"=>Some("\t"),
+                                "\\r"=>Some("\r"),
+                                _=>{
+                                    erase_mut(self).diagnose(Location::Element(element_id),Diagnostic::StringEscapeError { source: string_escape.upcast() });
+                                    None
+                                }
+                            }
+                        },
+                        moss::StringContentChild::StringRaw(string_raw) => {
+                            Some(erase(self).get_node_str(&string_raw, file_id))
+                        },
+                    }?;
+                    if let Some(value) = &mut value{
+                        value.to_mut().push_str(content_value);
+                    }else{
+                        value = Some(Cow::Borrowed(content_value))
+                    }
+                }
+
+
+                Value::String(self.str2id(value.as_ref().map(|x|x.as_ref()).unwrap_or("")))
             }
             moss::ValueChild::Builtin(builtin) => {
                 let builtin =
@@ -876,6 +905,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                                 .upcast(),
                                         },
                                     );
+                                    return None
                                 }
                                 let module_id =
                                     self.depend_module(ModuleAuthored::File { path }, element_id)?;

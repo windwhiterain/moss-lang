@@ -1,5 +1,4 @@
 use std::{
-    cell::OnceCell,
     collections::HashMap,
     path::{Path, PathBuf},
     str::FromStr,
@@ -11,18 +10,21 @@ use tower_lsp::{
     Client, LanguageServer as LanguageServerLike,
     lsp_types::{
         CompletionParams, CompletionResponse, Diagnostic as LspDiagnostic, DiagnosticSeverity,
-        DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-        DidSaveTextDocumentParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
-        InitializeParams, InitializeResult, InitializedParams, MarkedString, MessageType,
-        Position as LspPosition, Range as LspRange, SaveOptions, ServerCapabilities,
-        TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-        TextDocumentSyncSaveOptions, Url,
+        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams, Hover,
+        HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
+        InitializedParams, MarkedString, MessageType, Position as LspPosition, Range as LspRange,
+        SaveOptions, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
+        TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Url,
     },
 };
 
-use moss_lang_interpreter::{interpreter::{
-    Interpreter, InterpreterLike, InterpreterLikeMut, LocalId, Node, StringInterner, UntypedNode, diagnose::Diagnostic, file::FileId, module::ModuleAuthored, scope::LocalScopeId, value::ContextedValue
-}, utils::erase_mut};
+use moss_interpreter::{
+    interpreter::{
+        Interpreter, InterpreterLike, LocalId, Node, UntypedNode, diagnose::Diagnostic,
+        file::FileId, module::ModuleAuthored, scope::LocalScopeId, value::ContextedValue,
+    },
+    utils::erase_mut,
+};
 
 pub struct LanguageServer {
     pub client: Client,
@@ -160,6 +162,14 @@ impl LanguageServer {
                                 DiagnosticSeverity::ERROR,
                             ));
                     }
+                    Diagnostic::StringEscapeError { source } => {
+                        self.lsp_diagnostics
+                            .push(self.language_server.make_diagnostic(
+                                *source,
+                                "string escape error",
+                                DiagnosticSeverity::ERROR,
+                            ));
+                    },
                 };
             }
             fn traverse(&mut self, scope_id: LocalScopeId) {

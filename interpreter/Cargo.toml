@@ -1,5 +1,5 @@
 [package]
-name = "moss-lang-interpreter"
+name = "moss-interpreter"
 version = "0.1.0"
 edition = "2024"
 

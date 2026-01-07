@@ -26,5 +26,8 @@ pub enum Diagnostic {
     },
     PathError{
         source: UntypedNode<'static>,
+    },
+    StringEscapeError{
+        source:UntypedNode<'static>,
     }
 }
