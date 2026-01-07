@@ -1,9 +1,9 @@
 <div align = "center">
-    <img src="logo.svg" width="200">
-    
-    The Moss Programming Language:
+<img src="logo.svg" width="200">
 
-    Frontend for all DSL
+# The Moss Programming Language
+
+-- *Frontend for all DSL* --
 
 </div>
 
