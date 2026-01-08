@@ -4,14 +4,13 @@ use smallvec::SmallVec;
 use type_sitter::UntypedNode;
 
 use crate::{
-    interpreter::{
-        LocalId,
+    in_module_id, interpreter::{
+        InModuleId,
         diagnose::Diagnostic,
         module::ModuleId,
         scope::LocalInModuleScopeId,
         value::{TypedValue, Value},
-    },
-    utils::{concurrent_string_interner::StringId, moss},
+    }, new_type, utils::{concurrent_string_interner::StringId, moss}
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -20,52 +19,51 @@ pub enum ElementKey {
     Temp,
 }
 
-new_key_type! {pub struct LocalInModuleElementId;}
+new_key_type! {pub struct InModuleElementId;}
 
-#[derive(Clone, Copy, Hash, PartialEq)]
-pub struct LocalElementId {
-    pub in_module: LocalInModuleElementId,
+#[derive(Clone, Copy, PartialEq,Debug)]
+pub struct ElementId {
+    pub in_module: InModuleElementId,
     pub module: ModuleId,
 }
 
-#[derive(Clone, Copy, Hash, PartialEq)]
+in_module_id!{InModuleElementId,ElementId}
+
+new_type!{
+    #[derive(Clone,Copy,PartialEq,Debug)]
+    pub RemoteInModuleElementId = usize
+}
+
+#[derive(Clone, Copy, PartialEq)]
 pub struct RemoteElementId {
-    pub in_module: usize,
+    pub in_module: RemoteInModuleElementId,
     pub module: ModuleId,
 }
 
-#[derive(Clone, Copy, Hash, PartialEq)]
-pub enum ElementId {
-    Local(LocalElementId),
+in_module_id!(RemoteInModuleElementId,RemoteElementId);
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ConcurrentElementId {
+    Local(ElementId),
     Remote(RemoteElementId),
 }
 
-impl LocalId for LocalInModuleElementId {
-    type GlobalId = LocalElementId;
-
-    fn global(self, module: ModuleId) -> Self::GlobalId {
-        Self::GlobalId {
-            in_module: self,
-            module,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct ElementRemoteMut {
+#[derive(Clone, Copy,Debug)]
+pub struct ElementRemoteCell {
     pub value: TypedValue,
     pub resolved: bool,
 }
 
+#[derive(Debug)]
 pub struct ElementRemote {
-    pub r#mut: AtomicCell<ElementRemoteMut>,
-    pub local_id: LocalInModuleElementId,
+    pub cell: AtomicCell<ElementRemoteCell>,
+    pub local_id: InModuleElementId,
 }
 
 impl ElementRemote {
-    pub fn new(local_id: LocalInModuleElementId) -> Self {
+    pub fn new(local_id: InModuleElementId) -> Self {
         Self {
-            r#mut: AtomicCell::new(ElementRemoteMut {
+            cell: AtomicCell::new(ElementRemoteCell {
                 value: TypedValue::err(),
                 resolved: false,
             }),
@@ -74,6 +72,7 @@ impl ElementRemote {
     }
 }
 
+#[derive(Debug)]
 pub struct Element {
     pub key: ElementKey,
     pub resolved_value: TypedValue,
@@ -83,10 +82,11 @@ pub struct Element {
     pub dependants: SmallVec<[Dependant; 4]>,
     pub resolved: bool,
     pub authored: Option<ElementAuthored>,
-    pub remote_id: Option<usize>,
+    pub remote_id: Option<RemoteInModuleElementId>,
     pub diagnoistics: Vec<Diagnostic>,
 }
 
+#[derive(Debug)]
 pub struct ElementAuthored {
     pub value_node: moss::Value<'static>,
     pub key_node: Option<moss::Name<'static>>,
@@ -109,8 +109,14 @@ impl Element {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy,Debug)]
 pub struct Dependant {
-    pub element_id: LocalElementId,
+    pub element_id: ElementId,
+    pub node: UntypedNode<'static>,
+}
+
+pub struct Depend {
+    pub dependant: ElementId,
+    pub dependency: ElementId,
     pub node: UntypedNode<'static>,
 }

@@ -4,9 +4,6 @@
 			"path": "tree-sitter-moss"
 		},
 		{
-			"path": "zed-extension"
-		},
-		{
 			"path": "."
 		}
 	]

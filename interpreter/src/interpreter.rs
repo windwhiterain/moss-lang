@@ -1,24 +1,26 @@
 use crate::erase_struct;
 use crate::interpreter::diagnose::Diagnostic;
+use crate::interpreter::element::ConcurrentElementId;
+use crate::interpreter::element::Depend;
 use crate::interpreter::element::Dependant;
 use crate::interpreter::element::Element;
 use crate::interpreter::element::ElementAuthored;
 use crate::interpreter::element::ElementId;
 use crate::interpreter::element::ElementKey;
 use crate::interpreter::element::ElementRemote;
-use crate::interpreter::element::ElementRemoteMut;
-use crate::interpreter::element::LocalElementId;
-use crate::interpreter::element::LocalInModuleElementId;
+use crate::interpreter::element::ElementRemoteCell;
+use crate::interpreter::element::InModuleElementId;
 use crate::interpreter::element::RemoteElementId;
+use crate::interpreter::element::RemoteInModuleElementId;
 use crate::interpreter::file::File;
 use crate::interpreter::file::FileId;
 use crate::interpreter::module::Module;
-use crate::interpreter::module::ModuleAuthored;
 use crate::interpreter::module::ModuleCell;
 use crate::interpreter::module::ModuleId;
 use crate::interpreter::module::ModuleRemote;
 use crate::interpreter::scope::LocalInModuleScopeId;
 use crate::interpreter::scope::LocalScopeId;
+use crate::interpreter::scope::RemoteInModuleScopeId;
 use crate::interpreter::scope::RemoteScopeId;
 use crate::interpreter::scope::Scope;
 use crate::interpreter::scope::ScopeAuthored;
@@ -32,7 +34,6 @@ use crate::interpreter::thread::ThreadId;
 use crate::interpreter::thread::ThreadMut;
 use crate::interpreter::thread::ThreadRemote;
 use crate::interpreter::value::Builtin;
-use crate::interpreter::value::ContextedValue;
 use crate::interpreter::value::TypedValue;
 use crate::interpreter::value::Value;
 use crate::utils::concurrent_string_interner::ConcurentInterner;
@@ -40,7 +41,6 @@ use crate::utils::concurrent_string_interner::StringId;
 use crate::utils::erase;
 use crate::utils::erase_mut;
 use crate::utils::moss::BuiltinChild;
-use crate::utils::secondary_linked_list::Link;
 use crate::utils::secondary_linked_list::List;
 use slotmap::SecondaryMap;
 use slotmap::SlotMap;
@@ -50,7 +50,6 @@ use std::mem;
 use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::thread::available_parallelism;
@@ -64,6 +63,7 @@ pub use type_sitter::Node;
 use type_sitter::NodeResult;
 pub use type_sitter::UntypedNode;
 pub type Tree = type_sitter::Tree<moss::SourceFile<'static>>;
+use crate::utils::type_key::Vec as KeyVec;
 
 pub mod diagnose;
 pub mod element;
@@ -75,15 +75,25 @@ pub mod value;
 
 static SRC_FILE_EXTENSION: &str = "moss";
 
-pub trait LocalId {
+pub trait InModuleId {
     type GlobalId;
     fn global(self, module: ModuleId) -> Self::GlobalId;
 }
 
-pub struct Depend {
-    pub dependant: LocalElementId,
-    pub dependency: LocalElementId,
-    pub node: UntypedNode<'static>,
+#[macro_export]
+macro_rules! in_module_id {
+    ($in_module:ident,$global:ident) => {
+        impl InModuleId for $in_module {
+            type GlobalId = $global;
+
+            fn global(self, module: ModuleId) -> Self::GlobalId {
+                Self::GlobalId {
+                    in_module: self,
+                    module,
+                }
+            }
+        }
+    };
 }
 
 pub struct Interpreter {
@@ -142,13 +152,17 @@ impl Interpreter {
         self.path2file.get(path.as_ref()).copied()
     }
     pub fn find_or_add_file(&mut self, path: Cow<PathBuf>) -> FileId {
-        match erase_mut(self).path2file.raw_entry_mut().from_key(path.as_path()) {
+        match erase_mut(self)
+            .path2file
+            .raw_entry_mut()
+            .from_key(path.as_path())
+        {
             hashbrown::hash_map::RawEntryMut::Occupied(raw_occupied_entry_mut) => {
                 *raw_occupied_entry_mut.get()
             }
             hashbrown::hash_map::RawEntryMut::Vacant(raw_vacant_entry_mut) => {
                 let path = path.into_owned();
-                let file = File::new(path.clone(),self);
+                let file = File::new(path.clone(), self);
                 let file_id = self.files.insert(file);
                 raw_vacant_entry_mut.insert(path, file_id);
                 file_id
@@ -163,30 +177,14 @@ impl Interpreter {
         };
         id
     }
-    pub fn add_module(&mut self, authored: ModuleAuthored) -> ModuleId {
-        let module = match authored {
-            ModuleAuthored::File { path } => {
-                let file_id = self.find_or_add_file(Cow::Owned(path));
-                let file = erase_mut(self).get_file(file_id);
-                let source = ScopeSource::File(file.tree.root_node().unwrap());
-                let module = erase_mut(self).add_module_raw(ScopeAuthored {
-                    source,
-                    file: file_id,
-                });
-                module
-            }
-            ModuleAuthored::Scope {
-                file: file_id,
-                source,
-            } => {
-                let source = ScopeSource::Scope(source);
-                let module = erase_mut(self).add_module_raw(ScopeAuthored {
-                    source,
-                    file: file_id,
-                });
-                module
-            }
-        };
+    pub fn add_module(&mut self, path: PathBuf) -> ModuleId {
+        let file_id = self.find_or_add_file(Cow::Owned(path));
+        let file = erase_mut(self).get_file(file_id);
+        let source = ScopeSource::File(file.tree.root_node().unwrap());
+        let module = erase_mut(self).add_module_raw(ScopeAuthored {
+            source,
+            file: file_id,
+        });
         self.unresolved_modules.push(module);
         self.increase_workload();
         module
@@ -223,7 +221,7 @@ impl Interpreter {
                     module_per_thread -= 1;
                     module_num -= 1;
                     if module_per_thread == 0 {
-                        let thread = &mut self.remote.threads[thread_id];
+                        let thread = self.remote.threads.get_mut(thread_id);
                         thread.r#mut.get_mut().modules = module_ids;
                         break;
                     }
@@ -251,7 +249,7 @@ impl Interpreter {
             for thread_id in erase(self).remote.threads.keys() {
                 let thread = erase_mut(self).get_thread_mut(thread_id);
                 for (path, dependants) in mem::take(&mut thread.add_module_delay.files) {
-                    let module_id = self.add_module(ModuleAuthored::File { path });
+                    let module_id = self.add_module(path);
                     let module = self.get_module_mut(module_id);
                     for dependant in dependants.iter().copied() {
                         module.dependants.push(dependant);
@@ -267,6 +265,22 @@ impl Interpreter {
                 }
             }
             log::error!("run loop)");
+            for (module_id, module) in &mut self.modules {
+                unsafe {
+                    let scopes = &module.cell.as_ref_unchecked().scopes;
+                    let elements = &module.cell.as_ref_unchecked().elements;
+                    let remote_scopes = &module.remote.scopes;
+                    let remote_elements = &module.remote.elements;
+                    log::error!(
+                        "module {:?}:\n scopes:\n{:?},\n elements:\n{:?},\n remmote_scopes:\n{:?},\n remote_elements:{:?}",
+                        module_id,
+                        scopes,
+                        elements,
+                        remote_scopes,
+                        remote_elements
+                    );
+                }
+            }
         }
         log::error!("run)");
     }
@@ -274,7 +288,7 @@ impl Interpreter {
 
 pub struct InterpreterRemote {
     pub module2thread: SecondaryMap<ModuleId, Option<ThreadId>>,
-    pub threads: SlotMap<ThreadId, Thread>,
+    pub threads: KeyVec<ThreadId, Thread>,
     pub strings: ConcurrentStringInterner,
     pub workload: AtomicUsize,
     pub workload_zero: Notify,
@@ -327,7 +341,7 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadInterpreter<'a, IP> {
                         Signal::Depend(depend) => {
                             self.depend_element(
                                 depend.dependant,
-                                ElementId::Local(depend.dependency),
+                                ConcurrentElementId::Local(depend.dependency),
                                 depend.node,
                                 false,
                             );
@@ -370,7 +384,7 @@ pub type StringInterner = crate::utils::concurrent_string_interner::Interner;
 pub type ConcurrentStringInterner = crate::utils::concurrent_string_interner::ConcurentInterner;
 
 pub enum Location {
-    Element(LocalElementId),
+    Element(ElementId),
     Scope(LocalScopeId),
 }
 
@@ -386,14 +400,14 @@ pub trait InterpreterLikeMut: InterpreterLike {
     fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadMut>;
     fn get_module_mut(&mut self, id: ModuleId) -> &mut ModuleCell;
 
-    fn get_element_mut(&mut self, id: LocalElementId) -> &mut Element {
+    fn get_element_mut(&mut self, id: ElementId) -> &mut Element {
         &mut self.get_module_mut(id.module).elements[id.in_module]
     }
     fn get_scope_mut(&mut self, id: LocalScopeId) -> &mut Scope {
         &mut self.get_module_mut(id.module).scopes[id.in_module]
     }
 
-    fn add_element_raw(&mut self, element: Element, module: ModuleId) -> LocalInModuleElementId {
+    fn add_element_raw(&mut self, element: Element, module: ModuleId) -> InModuleElementId {
         let module = self.get_module_mut(module);
         module.unresolved_count += 1;
         module.elements.insert(element)
@@ -426,38 +440,28 @@ pub trait InterpreterLikeMut: InterpreterLike {
         }
         log::error!("run module): {:?}", module_id);
     }
-    fn depend_module_raw(
-        &mut self,
-        authored: ModuleAuthored,
-        element_id: LocalElementId,
-    ) -> Option<ModuleId>;
-    fn depend_module(
-        &mut self,
-        authored: ModuleAuthored,
-        element_id: LocalElementId,
-    ) -> Option<ModuleId> {
-        if let ModuleAuthored::File { path } = &authored {
-            if let Some(file) = self.find_file(path) {
-                let file = self.get_file(file);
-                if let Some(module) = file.is_module {
-                    return Some(module);
-                }
+    fn depend_module_raw(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId>;
+    fn depend_module(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId> {
+        if let Some(file) = self.find_file(&path) {
+            let file = self.get_file(file);
+            if let Some(module) = file.is_module {
+                return Some(module);
             }
         }
-        self.depend_module_raw(authored, element_id)
+        self.depend_module_raw(path, element_id)
     }
 
     fn depend_element(
         &mut self,
-        dependant_id: LocalElementId,
-        dependency_id: ElementId,
+        dependant_id: ElementId,
+        dependency_id: ConcurrentElementId,
         node: UntypedNode<'static>,
         local: bool,
     );
     fn depend_element_value(
         &mut self,
-        dependant_id: LocalElementId,
-        dependency_id: ElementId,
+        dependant_id: ElementId,
+        dependency_id: ConcurrentElementId,
         node: UntypedNode<'static>,
     ) -> Option<TypedValue> {
         let value = self.get_element_value(dependency_id);
@@ -468,14 +472,18 @@ pub trait InterpreterLikeMut: InterpreterLike {
     }
     fn depend_child_element_value(
         &mut self,
-        dependant_id: LocalElementId,
-        dependency_id: LocalElementId,
+        dependant_id: ElementId,
+        dependency_id: ElementId,
     ) -> Option<TypedValue> {
         let dependency = self.get_element(dependency_id);
         let node = dependency.authored.as_ref().unwrap().value_node.upcast();
-        self.depend_element_value(dependant_id, ElementId::Local(dependency_id), node)
+        self.depend_element_value(
+            dependant_id,
+            ConcurrentElementId::Local(dependency_id),
+            node,
+        )
     }
-    fn resolve_element(&mut self, id: LocalElementId);
+    fn resolve_element(&mut self, id: ElementId);
 
     fn grammar_error<T>(
         &mut self,
@@ -510,7 +518,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
     fn parse_value(
         &mut self,
         node: NodeResult<'static, moss::Value<'static>>,
-        element_id: LocalElementId,
+        element_id: ElementId,
         file_id: FileId,
     ) -> Option<Value> {
         let node = self.grammar_error(Location::Element(element_id), node)?;
@@ -598,36 +606,43 @@ pub trait InterpreterLikeMut: InterpreterLike {
             }
             moss::ValueChild::String(string) => {
                 let mut cursor = erase_struct!(self.get_file(file_id).tree.walk());
-                let mut value:Option<Cow<str>> = None;
-                for content in string.contents(erase_mut(&mut cursor)){
-                    let content =  erase_mut(self).grammar_error(Location::Element(element_id), content)?;
-                    let content_value =  match erase_mut(self).grammar_error(Location::Element(element_id), content.child())?{
+                let mut value: Option<Cow<str>> = None;
+                for content in string.contents(erase_mut(&mut cursor)) {
+                    let content =
+                        erase_mut(self).grammar_error(Location::Element(element_id), content)?;
+                    let content_value = match erase_mut(self)
+                        .grammar_error(Location::Element(element_id), content.child())?
+                    {
                         moss::StringContentChild::StringEscape(string_escape) => {
-                            match erase(self).get_node_str(&string_escape, file_id){
-                                "\\\""=>Some("\""),
-                                "\\\\"=>Some("\\"),
-                                "\\n"=>Some("\n"),
-                                "\\t"=>Some("\t"),
-                                "\\r"=>Some("\r"),
-                                _=>{
-                                    erase_mut(self).diagnose(Location::Element(element_id),Diagnostic::StringEscapeError { source: string_escape.upcast() });
+                            match erase(self).get_node_str(&string_escape, file_id) {
+                                "\\\"" => Some("\""),
+                                "\\\\" => Some("\\"),
+                                "\\n" => Some("\n"),
+                                "\\t" => Some("\t"),
+                                "\\r" => Some("\r"),
+                                _ => {
+                                    erase_mut(self).diagnose(
+                                        Location::Element(element_id),
+                                        Diagnostic::StringEscapeError {
+                                            source: string_escape.upcast(),
+                                        },
+                                    );
                                     None
                                 }
                             }
-                        },
+                        }
                         moss::StringContentChild::StringRaw(string_raw) => {
                             Some(erase(self).get_node_str(&string_raw, file_id))
-                        },
+                        }
                     }?;
-                    if let Some(value) = &mut value{
+                    if let Some(value) = &mut value {
                         value.to_mut().push_str(content_value);
-                    }else{
+                    } else {
                         value = Some(Cow::Borrowed(content_value))
                     }
                 }
 
-
-                Value::String(self.str2id(value.as_ref().map(|x|x.as_ref()).unwrap_or("")))
+                Value::String(self.str2id(value.as_ref().map(|x| x.as_ref()).unwrap_or("")))
             }
             moss::ValueChild::Builtin(builtin) => {
                 let builtin =
@@ -647,7 +662,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         key: ElementKey,
         scope_id: LocalScopeId,
         value: TypedValue,
-    ) -> LocalElementId {
+    ) -> ElementId {
         let scope = erase_mut(self.get_scope_mut(scope_id));
         let id = self
             .add_element_raw(Element::new(key, scope_id.in_module), scope_id.module)
@@ -669,7 +684,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         scope_id: LocalScopeId,
         authored: ElementAuthored,
         file: FileId,
-    ) -> Result<LocalElementId, ()> {
+    ) -> Result<ElementId, ()> {
         let scope = erase_mut(self.get_scope_mut(scope_id));
         let new_id = |self_: &mut Self| {
             self_
@@ -691,14 +706,15 @@ pub trait InterpreterLikeMut: InterpreterLike {
         element.authored = Some(authored);
         Ok(id)
     }
-    fn publish_scope(&mut self, id: LocalScopeId) -> usize {
+    fn publish_scope(&mut self, id: LocalScopeId) -> RemoteInModuleScopeId {
         let scope = erase_mut(self).get_scope_mut(id);
+        assert!(self.is_module_local(id.module));
         let module = erase_mut(self).get_module_remote(id.module);
-        let mut remote_elements = HashMap::<StringId, usize>::new();
+        let mut remote_elements = HashMap::<StringId, RemoteInModuleElementId>::new();
         for (key, element_id) in &erase(scope).elements {
             let element = self.get_element_mut(element_id.global(id.module));
             let remote = ElementRemote::new(*element_id);
-            let remote_id = module.elements.insert(remote).unwrap();
+            let remote_id = unsafe{module.elements.insert(remote)};
             element.remote_id = Some(remote_id);
             remote_elements.insert(*key, remote_id);
         }
@@ -711,7 +727,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             parent,
             local_id: id.in_module,
         };
-        let remote_id = module.scopes.insert(remote).unwrap();
+        let remote_id = unsafe{module.scopes.insert(remote)};
         scope.remote_id = Some(remote_id);
         remote_id
     }
@@ -784,7 +800,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         self.publish_scope(scope_id);
         scope_id.in_module
     }
-    fn run_value(&mut self, value: Value, element_id: LocalElementId) -> Option<TypedValue> {
+    fn run_value(&mut self, value: Value, element_id: ElementId) -> Option<TypedValue> {
         let value = match value {
             Value::Int(x) => TypedValue {
                 value: Value::Int(x),
@@ -822,7 +838,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 if let Some(ref_element_id) = self.find_element_local(scope, name, true) {
                     self.depend_element_value(
                         element_id,
-                        ElementId::Local(ref_element_id),
+                        ConcurrentElementId::Local(ref_element_id),
                         node.upcast(),
                     )?
                 } else {
@@ -905,10 +921,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                                 .upcast(),
                                         },
                                     );
-                                    return None
+                                    return None;
                                 }
-                                let module_id =
-                                    self.depend_module(ModuleAuthored::File { path }, element_id)?;
+                                let module_id = self.depend_module(path, element_id)?;
                                 if self.is_module_local(module_id) {
                                     self.parse_module(module_id);
                                 }
@@ -946,8 +961,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
 
         Some(value)
     }
-    fn set_element_value(&mut self, element_id: LocalElementId, value: TypedValue, resolved: bool);
-    fn run_element(&mut self, element_id: LocalElementId) {
+    fn set_element_value(&mut self, element_id: ElementId, value: TypedValue, resolved: bool);
+    fn run_element(&mut self, element_id: ElementId) {
         let element = erase_mut(self.get_element_mut(element_id));
 
         if element.resolved || element.dependency_count > 0 {
@@ -955,15 +970,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
         }
 
         if let ElementKey::Name(name) = element.key {
-            log::error!(
-                "run element(: {}",
-                &*self.id2str(name),
-            );
+            log::error!("run element(: {}", &*self.id2str(name),);
         } else {
-            log::error!(
-                "run element(: {:?}",
-                element_id.in_module,
-            );
+            log::error!("run element(: {:?}", element_id.in_module,);
         }
 
         if let Some(resolved_value) = self.run_value(element.raw_value, element_id) {
@@ -978,15 +987,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let module = self.get_module_mut(element_id.module);
         module.unresolved_count -= 1;
         if let ElementKey::Name(name) = element.key {
-            log::error!(
-                "run element): {}",
-                &*self.id2str(name)
-            );
+            log::error!("run element): {}", &*self.id2str(name));
         } else {
-            log::error!(
-                "run element): {:?}",
-                element_id.in_module
-            );
+            log::error!("run element): {:?}", element_id.in_module);
         }
         for dependant in mem::take(&mut element.dependants) {
             self.resolve_element(dependant.element_id);
@@ -996,7 +999,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 in_module: *remote_id,
                 module: element_id.module,
             });
-            remote.deref().r#mut.store(ElementRemoteMut {
+            remote.deref().cell.store(ElementRemoteCell {
                 value: element.resolved_value,
                 resolved: true,
             });
@@ -1013,26 +1016,24 @@ pub trait InterpreterLike {
     fn get_module(&self, id: ModuleId) -> &ModuleCell;
     fn get_module_remote(&self, id: ModuleId) -> &ModuleRemote;
     fn get_thread_remote_of(&self, module: ModuleId) -> Option<&ThreadRemote>;
-    fn get_element_value(&self, id: ElementId) -> Option<TypedValue>;
-    fn find_element(&self, scope: ScopeId, key: StringId, include_super: bool)
-    -> Option<ElementId>;
-    fn get_element(&self, id: LocalElementId) -> &Element {
+    fn get_element_value(&self, id: ConcurrentElementId) -> Option<TypedValue>;
+    fn find_element(
+        &self,
+        scope: ScopeId,
+        key: StringId,
+        include_super: bool,
+    ) -> Option<ConcurrentElementId>;
+    fn get_element(&self, id: ElementId) -> &Element {
         &self.get_module(id.module).elements[id.in_module]
     }
     fn get_scope(&self, id: LocalScopeId) -> &Scope {
         &self.get_module(id.module).scopes[id.in_module]
     }
     fn get_element_remote(&self, id: RemoteElementId) -> impl Deref<Target = ElementRemote> {
-        self.get_module_remote(id.module)
-            .elements
-            .get(id.in_module)
-            .unwrap()
+        self.get_module_remote(id.module).elements.get(id.in_module)
     }
     fn get_scope_remote(&self, id: RemoteScopeId) -> impl Deref<Target = ScopeRemote> {
-        self.get_module_remote(id.module)
-            .scopes
-            .get(id.in_module)
-            .unwrap()
+        self.get_module_remote(id.module).scopes.get(id.in_module)
     }
 
     fn get_file(&self, id: FileId) -> &File;
@@ -1048,7 +1049,7 @@ pub trait InterpreterLike {
         scope_id: LocalScopeId,
         key: StringId,
         include_super: bool,
-    ) -> Option<LocalElementId> {
+    ) -> Option<ElementId> {
         let scope = erase(self.get_scope(scope_id));
 
         if include_super {
@@ -1111,7 +1112,7 @@ impl InterpreterLike for Interpreter {
         self.strings.resolve(id)
     }
     fn get_thread_remote(&self, id: ThreadId) -> &ThreadRemote {
-        &self.remote.threads[id].remote
+        &self.remote.threads.get(id).remote
     }
     fn get_thread_remote_of(&self, module: ModuleId) -> Option<&ThreadRemote> {
         if let Some(id) = self.remote.module2thread[module] {
@@ -1129,9 +1130,9 @@ impl InterpreterLike for Interpreter {
     fn get_file(&self, id: FileId) -> &File {
         &self.files[id]
     }
-    fn get_element_value(&self, id: ElementId) -> Option<TypedValue> {
+    fn get_element_value(&self, id: ConcurrentElementId) -> Option<TypedValue> {
         match id {
-            ElementId::Local(local_element_id) => {
+            ConcurrentElementId::Local(local_element_id) => {
                 let dependency = self.get_element(local_element_id);
                 if dependency.resolved {
                     Some(dependency.resolved_value)
@@ -1139,7 +1140,7 @@ impl InterpreterLike for Interpreter {
                     None
                 }
             }
-            ElementId::Remote(remote_element_id) => unimplemented!(),
+            ConcurrentElementId::Remote(remote_element_id) => unimplemented!(),
         }
     }
 
@@ -1148,8 +1149,8 @@ impl InterpreterLike for Interpreter {
         scope_id: ScopeId,
         key: StringId,
         include_super: bool,
-    ) -> Option<ElementId> {
-        Some(ElementId::Local(self.find_element_local(
+    ) -> Option<ConcurrentElementId> {
+        Some(ConcurrentElementId::Local(self.find_element_local(
             scope_id.local,
             key,
             include_super,
@@ -1193,9 +1194,9 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadInterpreter<
     fn get_file(&self, id: FileId) -> &File {
         &self.interpreter.files[id]
     }
-    fn get_element_value(&self, dependency_id: ElementId) -> Option<TypedValue> {
+    fn get_element_value(&self, dependency_id: ConcurrentElementId) -> Option<TypedValue> {
         match dependency_id {
-            ElementId::Local(local_element_id) => {
+            ConcurrentElementId::Local(local_element_id) => {
                 let dependency = self.get_element(local_element_id);
                 if dependency.resolved {
                     Some(dependency.resolved_value)
@@ -1203,9 +1204,9 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadInterpreter<
                     None
                 }
             }
-            ElementId::Remote(remote_element_id) => {
+            ConcurrentElementId::Remote(remote_element_id) => {
                 let dependency = self.get_element_remote(remote_element_id);
-                let r#mut = dependency.r#mut.load();
+                let r#mut = dependency.cell.load();
                 if r#mut.resolved {
                     Some(r#mut.value)
                 } else {
@@ -1220,15 +1221,15 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadInterpreter<
         scope_id: ScopeId,
         key: StringId,
         include_super: bool,
-    ) -> Option<ElementId> {
+    ) -> Option<ConcurrentElementId> {
         if self.is_module_local(scope_id.get_module()) {
-            Some(ElementId::Local(self.find_element_local(
+            Some(ConcurrentElementId::Local(self.find_element_local(
                 scope_id.local,
                 key,
                 include_super,
             )?))
         } else {
-            Some(ElementId::Remote(self.find_element_remote(
+            Some(ConcurrentElementId::Remote(self.find_element_remote(
                 scope_id.get_remote().unwrap(),
                 key,
                 include_super,
@@ -1259,7 +1260,7 @@ impl InterpreterLikeMut for Interpreter {
     }
 
     fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadMut {
-        self.remote.threads[id].r#mut.get_mut()
+        self.remote.threads.get_mut(id).r#mut.get_mut()
     }
 
     fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadMut> {
@@ -1276,8 +1277,8 @@ impl InterpreterLikeMut for Interpreter {
 
     fn depend_element(
         &mut self,
-        dependant_id: LocalElementId,
-        dependency_id: ElementId,
+        dependant_id: ElementId,
+        dependency_id: ConcurrentElementId,
         node: UntypedNode<'static>,
         local: bool,
     ) {
@@ -1286,7 +1287,7 @@ impl InterpreterLikeMut for Interpreter {
             dependant.dependency_count += 1;
         }
         match dependency_id {
-            ElementId::Local(local_element_id) => {
+            ConcurrentElementId::Local(local_element_id) => {
                 let dependency = erase_mut(self.get_element_mut(local_element_id));
                 dependency.dependants.push(Dependant {
                     element_id: dependant_id,
@@ -1297,24 +1298,20 @@ impl InterpreterLikeMut for Interpreter {
         }
     }
 
-    fn resolve_element(&mut self, id: LocalElementId) {
+    fn resolve_element(&mut self, id: ElementId) {
         let dependant = self.get_element_mut(id);
         dependant.dependency_count -= 1;
         self.run_element(id)
     }
 
-    fn set_element_value(&mut self, element_id: LocalElementId, value: TypedValue, resolved: bool) {
+    fn set_element_value(&mut self, element_id: ElementId, value: TypedValue, resolved: bool) {
         let element = self.get_element_mut(element_id);
         element.resolved_value = value;
         element.resolved = resolved;
     }
 
-    fn depend_module_raw(
-        &mut self,
-        authored: ModuleAuthored,
-        element_id: LocalElementId,
-    ) -> Option<ModuleId> {
-        Some(self.add_module(authored))
+    fn depend_module_raw(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId> {
+        Some(self.add_module(path))
     }
 
     fn increase_workload(&mut self) {
@@ -1338,7 +1335,14 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
 
     fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadMut {
         assert!(id == self.thread);
-        unsafe { self.interpreter.remote.threads[id].r#mut.as_mut_unchecked() }
+        unsafe {
+            self.interpreter
+                .remote
+                .threads
+                .get(id)
+                .r#mut
+                .as_mut_unchecked()
+        }
     }
 
     fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadMut> {
@@ -1356,8 +1360,8 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
 
     fn depend_element(
         &mut self,
-        dependant_id: LocalElementId,
-        dependency_id: ElementId,
+        dependant_id: ElementId,
+        dependency_id: ConcurrentElementId,
         node: UntypedNode<'static>,
         local: bool,
     ) {
@@ -1372,7 +1376,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
         }
 
         match dependency_id {
-            ElementId::Local(local_element_id) => {
+            ConcurrentElementId::Local(local_element_id) => {
                 if self.is_module_local(local_element_id.module) {
                     let dependency = erase_mut(self.get_element_mut(local_element_id));
                     if let ElementKey::Name(name) = dependency.key {
@@ -1398,7 +1402,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
                     }
                 }
             }
-            ElementId::Remote(remote_element_id) => {
+            ConcurrentElementId::Remote(remote_element_id) => {
                 let dependency = erase(self).get_element_remote(remote_element_id);
                 if let Some(thread) = erase(self).get_thread_remote_of(remote_element_id.module) {
                     thread.channel.push(Signal::Depend(Depend {
@@ -1412,7 +1416,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
         }
     }
 
-    fn resolve_element(&mut self, id: LocalElementId) {
+    fn resolve_element(&mut self, id: ElementId) {
         let thread = self.interpreter.remote.module2thread[id.module].unwrap();
 
         if thread == self.thread {
@@ -1426,7 +1430,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
         }
     }
 
-    fn set_element_value(&mut self, element_id: LocalElementId, value: TypedValue, resolved: bool) {
+    fn set_element_value(&mut self, element_id: ElementId, value: TypedValue, resolved: bool) {
         let element = self.get_element_mut(element_id);
         element.resolved_value = value;
         element.resolved = resolved;
@@ -1435,37 +1439,22 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
                 in_module: remote_id,
                 module: element_id.module,
             });
-            element.r#mut.store(ElementRemoteMut {
+            element.cell.store(ElementRemoteCell {
                 value,
                 resolved: resolved,
             });
         }
     }
 
-    fn depend_module_raw(
-        &mut self,
-        authored: ModuleAuthored,
-        element_id: LocalElementId,
-    ) -> Option<ModuleId> {
+    fn depend_module_raw(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId> {
         let element = self.get_element_mut(element_id);
         element.dependency_count += 1;
         let add_module_delay = &mut self.get_thread_mut(self.thread).add_module_delay;
-        match authored {
-            ModuleAuthored::File { path } => {
-                add_module_delay
-                    .files
-                    .entry(path)
-                    .or_default()
-                    .push(element_id);
-            }
-            ModuleAuthored::Scope { file, source } => {
-                add_module_delay.scopes.push(AddModuleDelayScope {
-                    file,
-                    scope: source,
-                    element: element_id,
-                });
-            }
-        }
+        add_module_delay
+            .files
+            .entry(path)
+            .or_default()
+            .push(element_id);
         None
     }
 

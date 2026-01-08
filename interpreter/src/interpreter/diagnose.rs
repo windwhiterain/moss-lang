@@ -2,7 +2,7 @@ use type_sitter::UntypedNode;
 
 use crate::interpreter::Value;
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub enum Diagnostic {
     GrammarError {
         source: UntypedNode<'static>,

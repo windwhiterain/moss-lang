@@ -1,16 +1,16 @@
-use crate::interpreter::LocalId;
+use crate::interpreter::InModuleId;
 use std::{fmt, ops::Deref};
 
 use crate::{
     interpreter::{
         InterpreterLike,
-        element::{Element, LocalElementId, LocalInModuleElementId},
+        element::{Element, ElementId, InModuleElementId},
         scope::{LocalScopeId, Scope, ScopeId},
     },
     utils::{concurrent_string_interner::StringId, moss},
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy,Debug)]
 pub enum Value {
     Int(i64),
     IntTy,
@@ -26,14 +26,14 @@ pub enum Value {
         node: moss::Name<'static>,
     },
     Find {
-        value: LocalElementId,
+        value: ElementId,
         key: StringId,
         key_source: moss::Name<'static>,
         source: moss::Find<'static>,
     },
     Call {
-        func: LocalElementId,
-        param: LocalElementId,
+        func: ElementId,
+        param: ElementId,
         source: moss::Call<'static>,
     },
     Err,
@@ -114,7 +114,7 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy,Debug)]
 pub enum Builtin {
     If,
     Add,
@@ -130,7 +130,7 @@ impl fmt::Display for Builtin {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy,Debug)]
 pub struct TypedValue {
     pub value: Value,
     pub r#type: Value,

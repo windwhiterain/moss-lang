@@ -1,32 +1,28 @@
+use crate::interpreter::{element::RemoteInModuleElementId, scope::RemoteInModuleScopeId};
+use slotmap::{SlotMap, new_key_type};
 use std::{
     cell::{OnceCell, UnsafeCell},
-    path::PathBuf,
     sync::OnceLock,
 };
 
-use sharded_slab::Slab;
-use slotmap::{SlotMap, new_key_type};
-
-use crate::{
-    interpreter::{
-        element::{Element, ElementRemote, LocalElementId, LocalInModuleElementId},
-        file::FileId,
-        scope::{LocalInModuleScopeId, Scope, ScopeAuthored, ScopeRemote},
-    },
-    utils::moss,
+use crate::interpreter::{
+    element::{Element, ElementId, ElementRemote, InModuleElementId},
+    scope::{LocalInModuleScopeId, Scope, ScopeAuthored, ScopeRemote},
 };
 
+use crate::utils::type_key::SimrVec as KeySimrVec;
+
 pub struct ModuleRemote {
-    pub scopes: Slab<ScopeRemote>,
-    pub elements: Slab<ElementRemote>,
-    pub root_scope: OnceLock<usize>,
+    pub scopes: KeySimrVec<RemoteInModuleScopeId, ScopeRemote>,
+    pub elements: KeySimrVec<RemoteInModuleElementId, ElementRemote>,
+    pub root_scope: OnceLock<RemoteInModuleScopeId>,
 }
 
 pub struct ModuleCell {
     pub scopes: SlotMap<LocalInModuleScopeId, Scope>,
-    pub elements: SlotMap<LocalInModuleElementId, Element>,
+    pub elements: SlotMap<InModuleElementId, Element>,
     pub authored: Option<ScopeAuthored>,
-    pub dependants: Vec<LocalElementId>,
+    pub dependants: Vec<ElementId>,
     pub root_scope: OnceCell<LocalInModuleScopeId>,
     pub unresolved_count: usize,
 }
@@ -66,13 +62,3 @@ impl Module {
 }
 
 new_key_type! {pub struct ModuleId;}
-
-pub enum ModuleAuthored {
-    File {
-        path: PathBuf,
-    },
-    Scope {
-        file: FileId,
-        source: moss::Scope<'static>,
-    },
-}

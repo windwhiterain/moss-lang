@@ -20,8 +20,8 @@ use tower_lsp::{
 
 use moss_interpreter::{
     interpreter::{
-        Interpreter, InterpreterLike, LocalId, Node, UntypedNode, diagnose::Diagnostic,
-        file::FileId, module::ModuleAuthored, scope::LocalScopeId, value::ContextedValue,
+        Interpreter, InterpreterLike, InModuleId, Node, UntypedNode, diagnose::Diagnostic,
+        file::FileId, scope::LocalScopeId, value::ContextedValue,
     },
     utils::erase_mut,
 };
@@ -169,7 +169,7 @@ impl LanguageServer {
                                 "string escape error",
                                 DiagnosticSeverity::ERROR,
                             ));
-                    },
+                    }
                 };
             }
             fn traverse(&mut self, scope_id: LocalScopeId) {
@@ -258,7 +258,7 @@ impl LanguageServer {
             };
             let mut interpreter = interpreter.write().await;
             interpreter.clear();
-            interpreter.add_module(ModuleAuthored::File { path: entry_path });
+            interpreter.add_module(entry_path);
             interpreter.run().await;
         }
         {

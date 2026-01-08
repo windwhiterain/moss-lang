@@ -1,0 +1,99 @@
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
+
+#[macro_export]
+macro_rules! new_type {
+    ( $(#[$outer:meta])* $vis:vis $new:ident = $old:ident ) => {
+        $(#[$outer])*
+        #[repr(transparent)]
+        $vis struct $new($old);
+
+        impl core::convert::From<$old> for $new {
+            fn from(value: $old) -> Self {
+                $new(value)
+            }
+        }
+
+        impl core::convert::From<$new> for $old {
+            fn from(value: $new) -> Self {
+                value.0
+            }
+        }
+    };
+}
+
+#[derive(Debug)]
+pub struct Vec<K, V>(std::vec::Vec<V>, PhantomData<K>);
+
+impl<K, V> Default for Vec<K, V> {
+    fn default() -> Self {
+        Self(Default::default(), Default::default())
+    }
+}
+
+impl<K: From<usize> + Into<usize>, V> Vec<K, V> {
+    pub fn insert(&mut self, value: V) -> K {
+        let key = self.0.len();
+        self.0.push(value);
+        key.into()
+    }
+    pub fn get(&self, key: K) -> &V {
+        self.0.get(key.into()).unwrap()
+    }
+    pub fn get_mut(&mut self, key: K) -> &mut V {
+        self.0.get_mut(key.into()).unwrap()
+    }
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn keys(&self) -> impl Iterator<Item = K> {
+        (0..self.len()).map(|x| x.into())
+    }
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.0.iter()
+    }
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.0.iter_mut()
+    }
+}
+
+#[derive(Debug)]
+pub struct SimrVec<K, V>(crate::utils::simr_vec::Vec<V>, PhantomData<K>);
+
+impl<K, V> Default for SimrVec<K, V> {
+    fn default() -> Self {
+        Self(Default::default(), Default::default())
+    }
+}
+
+impl<K: From<usize> + Into<usize>, V> SimrVec<K, V> {
+    pub unsafe fn insert(&self, value: V) -> K {
+        unsafe { self.0.push(value).into() }
+    }
+    pub fn get(&self, key: K) -> impl Deref<Target = V> {
+        self.0.get(key.into()).unwrap()
+    }
+    pub fn get_mut(&mut self, key: K) -> impl DerefMut<Target = V> {
+        self.0.get_mut(key.into()).unwrap()
+    }
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn keys(&self) -> impl Iterator<Item = K> {
+        (0..self.len()).map(|x| x.into())
+    }
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.0.iter()
+    }
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.0.iter_mut()
+    }
+}

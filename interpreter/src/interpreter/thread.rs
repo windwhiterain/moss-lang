@@ -3,8 +3,7 @@ use std::{cell::UnsafeCell, collections::HashMap, path::PathBuf, sync::Arc};
 use slotmap::new_key_type;
 
 use crate::{
-    interpreter::{Depend, element::LocalElementId, file::FileId, module::ModuleId},
-    utils::{async_lockfree_stack::Stack, moss},
+    interpreter::{Depend, element::ElementId, file::FileId, module::ModuleId}, new_type, utils::{async_lockfree_stack::Stack, moss}
 };
 
 pub struct Thread {
@@ -40,18 +39,21 @@ pub struct ThreadRemote {
 
 pub enum Signal {
     Depend(Depend),
-    Resolve(LocalElementId),
+    Resolve(ElementId),
 }
 
-new_key_type! {pub struct ThreadId;}
+new_type! {
+    #[derive(Clone,Copy,PartialEq,Debug)]
+    pub ThreadId = usize
+}
 
 pub struct AddModuleDelay {
-    pub files: HashMap<PathBuf, Vec<LocalElementId>>,
+    pub files: HashMap<PathBuf, Vec<ElementId>>,
     pub scopes: Vec<AddModuleDelayScope>,
 }
 
 pub struct AddModuleDelayScope {
     pub file: FileId,
     pub scope: moss::Scope<'static>,
-    pub element: LocalElementId,
+    pub element: ElementId,
 }
