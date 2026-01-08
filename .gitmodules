@@ -1,0 +1,3 @@
+[submodule "extern/arc-swap"]
+	path = extern/arc-swap
+	url = https://github.com/windwhiterain/arc-swap.git
