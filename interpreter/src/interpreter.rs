@@ -1,7 +1,6 @@
 use crate::erase_struct;
 use crate::interpreter::diagnose::Diagnostic;
 use crate::interpreter::element::ConcurrentElementId;
-use crate::interpreter::element::Depend;
 use crate::interpreter::element::Dependant;
 use crate::interpreter::element::Element;
 use crate::interpreter::element::ElementAuthored;
@@ -14,24 +13,24 @@ use crate::interpreter::element::RemoteElementId;
 use crate::interpreter::element::RemoteInModuleElementId;
 use crate::interpreter::file::File;
 use crate::interpreter::file::FileId;
+use crate::interpreter::module::ConcurrentModule;
 use crate::interpreter::module::Module;
-use crate::interpreter::module::ModuleCell;
 use crate::interpreter::module::ModuleId;
 use crate::interpreter::module::ModuleRemote;
-use crate::interpreter::scope::LocalInModuleScopeId;
-use crate::interpreter::scope::LocalScopeId;
+use crate::interpreter::scope::InModuleScopeId;
+use crate::interpreter::scope::ScopeId;
 use crate::interpreter::scope::RemoteInModuleScopeId;
 use crate::interpreter::scope::RemoteScopeId;
 use crate::interpreter::scope::Scope;
 use crate::interpreter::scope::ScopeAuthored;
-use crate::interpreter::scope::ScopeId;
+use crate::interpreter::scope::ConcurrentScopeId;
 use crate::interpreter::scope::ScopeRemote;
 use crate::interpreter::scope::ScopeSource;
-use crate::interpreter::thread::AddModuleDelayScope;
+use crate::interpreter::thread::Depend;
 use crate::interpreter::thread::Signal;
 use crate::interpreter::thread::Thread;
 use crate::interpreter::thread::ThreadId;
-use crate::interpreter::thread::ThreadMut;
+use crate::interpreter::thread::ThreadLocal;
 use crate::interpreter::thread::ThreadRemote;
 use crate::interpreter::value::Builtin;
 use crate::interpreter::value::TypedValue;
@@ -102,8 +101,8 @@ pub struct Interpreter {
     pub strings: StringInterner,
     pub files: SlotMap<FileId, File>,
     pub path2file: hashbrown::HashMap<PathBuf, FileId>,
-    pub root_scope: Option<LocalInModuleScopeId>,
-    pub modules: SlotMap<ModuleId, Module>,
+    pub root_scope: Option<InModuleScopeId>,
+    pub modules: SlotMap<ModuleId, ConcurrentModule>,
     pub unresolved_modules: List<ModuleId>,
     pub remote: InterpreterRemote,
     pub single_thread: bool,
@@ -170,7 +169,7 @@ impl Interpreter {
         }
     }
     pub fn add_module_raw(&mut self, source: ScopeAuthored) -> ModuleId {
-        let id = self.modules.insert(Module::new(source));
+        let id = self.modules.insert(ConcurrentModule::new(source));
         match source.source {
             ScopeSource::Scope(scope) => {}
             ScopeSource::File(source_file) => self.get_file_mut(source.file).is_module = Some(id),
@@ -222,7 +221,7 @@ impl Interpreter {
                     module_num -= 1;
                     if module_per_thread == 0 {
                         let thread = self.remote.threads.get_mut(thread_id);
-                        thread.r#mut.get_mut().modules = module_ids;
+                        thread.local.get_mut().modules = module_ids;
                         break;
                     }
                 }
@@ -267,8 +266,8 @@ impl Interpreter {
             log::error!("run loop)");
             for (module_id, module) in &mut self.modules {
                 unsafe {
-                    let scopes = &module.cell.as_ref_unchecked().scopes;
-                    let elements = &module.cell.as_ref_unchecked().elements;
+                    let scopes = &module.local.as_ref_unchecked().scopes;
+                    let elements = &module.local.as_ref_unchecked().elements;
                     let remote_scopes = &module.remote.scopes;
                     let remote_elements = &module.remote.elements;
                     log::error!(
@@ -385,7 +384,7 @@ pub type ConcurrentStringInterner = crate::utils::concurrent_string_interner::Co
 
 pub enum Location {
     Element(ElementId),
-    Scope(LocalScopeId),
+    Scope(ScopeId),
 }
 
 pub trait InterpreterLikeMut: InterpreterLike {
@@ -396,16 +395,16 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let str = erase(self.get_node_str(node, file));
         self.str2id(str)
     }
-    fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadMut;
-    fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadMut>;
-    fn get_module_mut(&mut self, id: ModuleId) -> &mut ModuleCell;
+    fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadLocal;
+    fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal>;
+    fn get_module_mut(&mut self, id: ModuleId) -> &mut Module;
 
     fn get_element_mut(&mut self, id: ElementId) -> &mut Element {
         self.get_module_mut(id.module)
             .elements
             .get_mut(id.in_module)
     }
-    fn get_scope_mut(&mut self, id: LocalScopeId) -> &mut Scope {
+    fn get_scope_mut(&mut self, id: ScopeId) -> &mut Scope {
         self.get_module_mut(id.module).scopes.get_mut(id.in_module)
     }
 
@@ -414,7 +413,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         module.unresolved_count += 1;
         module.elements.insert(element)
     }
-    fn add_scope_raw(&mut self, scope: Scope, module: ModuleId) -> LocalInModuleScopeId {
+    fn add_scope_raw(&mut self, scope: Scope, module: ModuleId) -> InModuleScopeId {
         self.get_module_mut(module).scopes.insert(scope)
     }
     fn parse_module(&mut self, module_id: ModuleId) {
@@ -562,7 +561,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     source: call,
                 }
             }
-            moss::ValueChild::Scope(scope) => Value::Scope(ScopeId::from_local(
+            moss::ValueChild::Scope(scope) => Value::Scope(ConcurrentScopeId::from_local(
                 erase(self),
                 self.add_scope(
                     Some(scope_id.in_module),
@@ -662,7 +661,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
     fn add_element(
         &mut self,
         key: ElementKey,
-        scope_id: LocalScopeId,
+        scope_id: ScopeId,
         value: TypedValue,
     ) -> ElementId {
         let scope = erase_mut(self.get_scope_mut(scope_id));
@@ -683,7 +682,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
     fn parse_element(
         &mut self,
         key: ElementKey,
-        scope_id: LocalScopeId,
+        scope_id: ScopeId,
         authored: ElementAuthored,
         file: FileId,
     ) -> Result<ElementId, ()> {
@@ -699,7 +698,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 .entry(name){
                     std::collections::hash_map::Entry::Occupied(occupied_entry) => {
                         if let Some(key_source) = authored.key_node{
-                            self.diagnose(Location::Scope(scope_id), Diagnostic::ElementKeyRedundancy { source: key_source.upcast() });
+                            self.diagnose(Location::Scope(scope_id), Diagnostic::RedundantElementKey { source: key_source.upcast() });
                         } 
                         return Err(())
                     },
@@ -719,7 +718,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         element.authored = Some(authored);
         Ok(id)
     }
-    fn publish_scope(&mut self, id: LocalScopeId) -> RemoteInModuleScopeId {
+    fn publish_scope(&mut self, id: ScopeId) -> RemoteInModuleScopeId {
         let scope = erase_mut(self).get_scope_mut(id);
         assert!(self.is_module_local(id.module));
         let module = erase_mut(self).get_module_remote(id.module);
@@ -746,10 +745,10 @@ pub trait InterpreterLikeMut: InterpreterLike {
     }
     fn add_scope(
         &mut self,
-        parent: Option<LocalInModuleScopeId>,
+        parent: Option<InModuleScopeId>,
         authored: Option<ScopeAuthored>,
         module: ModuleId,
-    ) -> LocalInModuleScopeId {
+    ) -> InModuleScopeId {
         let scope_id = self
             .add_scope_raw(Scope::new(parent, authored, module), module)
             .global(module);
@@ -941,7 +940,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                     module: module_id,
                                 });
                                 TypedValue {
-                                    value: Value::Scope(ScopeId {
+                                    value: Value::Scope(ConcurrentScopeId {
                                         local: scope.local_id.global(module_id),
                                         remote: Some(scope_id),
                                     }),
@@ -1020,20 +1019,20 @@ pub trait InterpreterLike {
     fn get_source_path(&self) -> &Path;
     fn id2str(&self, id: StringId) -> impl Deref<Target = str>;
     fn get_thread_remote(&self, id: ThreadId) -> &ThreadRemote;
-    fn get_module(&self, id: ModuleId) -> &ModuleCell;
+    fn get_module(&self, id: ModuleId) -> &Module;
     fn get_module_remote(&self, id: ModuleId) -> &ModuleRemote;
     fn get_thread_remote_of(&self, module: ModuleId) -> Option<&ThreadRemote>;
     fn get_element_value(&self, id: ConcurrentElementId) -> Option<TypedValue>;
     fn find_element(
         &self,
-        scope: ScopeId,
+        scope: ConcurrentScopeId,
         key: StringId,
         include_super: bool,
     ) -> Option<ConcurrentElementId>;
     fn get_element(&self, id: ElementId) -> &Element {
         self.get_module(id.module).elements.get(id.in_module)
     }
-    fn get_scope(&self, id: LocalScopeId) -> &Scope {
+    fn get_scope(&self, id: ScopeId) -> &Scope {
         self.get_module(id.module).scopes.get(id.in_module)
     }
     fn get_element_remote(&self, id: RemoteElementId) -> impl Deref<Target = ElementRemote> {
@@ -1053,7 +1052,7 @@ pub trait InterpreterLike {
     }
     fn find_element_local(
         &self,
-        scope_id: LocalScopeId,
+        scope_id: ScopeId,
         key: StringId,
         include_super: bool,
     ) -> Option<ElementId> {
@@ -1128,8 +1127,8 @@ impl InterpreterLike for Interpreter {
             None
         }
     }
-    fn get_module(&self, id: ModuleId) -> &ModuleCell {
-        unsafe { &self.modules[id].cell.as_ref_unchecked() }
+    fn get_module(&self, id: ModuleId) -> &Module {
+        unsafe { &self.modules[id].local.as_ref_unchecked() }
     }
     fn get_module_remote(&self, id: ModuleId) -> &ModuleRemote {
         &self.modules[id].remote
@@ -1153,7 +1152,7 @@ impl InterpreterLike for Interpreter {
 
     fn find_element(
         &self,
-        scope_id: ScopeId,
+        scope_id: ConcurrentScopeId,
         key: StringId,
         include_super: bool,
     ) -> Option<ConcurrentElementId> {
@@ -1191,9 +1190,9 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadInterpreter<
     fn get_thread_remote_of(&self, module: ModuleId) -> Option<&ThreadRemote> {
         self.interpreter.get_thread_remote_of(module)
     }
-    fn get_module(&self, id: ModuleId) -> &ModuleCell {
+    fn get_module(&self, id: ModuleId) -> &Module {
         assert!(!self.is_module_remote(id));
-        unsafe { self.interpreter.modules[id].cell.as_ref_unchecked() }
+        unsafe { self.interpreter.modules[id].local.as_ref_unchecked() }
     }
     fn get_module_remote(&self, id: ModuleId) -> &ModuleRemote {
         &self.interpreter.modules[id].remote
@@ -1225,7 +1224,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadInterpreter<
 
     fn find_element(
         &self,
-        scope_id: ScopeId,
+        scope_id: ConcurrentScopeId,
         key: StringId,
         include_super: bool,
     ) -> Option<ConcurrentElementId> {
@@ -1266,11 +1265,11 @@ impl InterpreterLikeMut for Interpreter {
         self.strings.get_or_intern(str)
     }
 
-    fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadMut {
-        self.remote.threads.get_mut(id).r#mut.get_mut()
+    fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadLocal {
+        self.remote.threads.get_mut(id).local.get_mut()
     }
 
-    fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadMut> {
+    fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal> {
         if let Some(id) = self.remote.module2thread[module] {
             Some(self.get_thread_mut(id))
         } else {
@@ -1278,8 +1277,8 @@ impl InterpreterLikeMut for Interpreter {
         }
     }
 
-    fn get_module_mut(&mut self, id: ModuleId) -> &mut ModuleCell {
-        self.modules[id].cell.get_mut()
+    fn get_module_mut(&mut self, id: ModuleId) -> &mut Module {
+        self.modules[id].local.get_mut()
     }
 
     fn depend_element(
@@ -1340,19 +1339,19 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
         self.interpreter.remote.strings.get_or_intern(str)
     }
 
-    fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadMut {
+    fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadLocal {
         assert!(id == self.thread);
         unsafe {
             self.interpreter
                 .remote
                 .threads
                 .get(id)
-                .r#mut
+                .local
                 .as_mut_unchecked()
         }
     }
 
-    fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadMut> {
+    fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal> {
         if let Some(id) = self.interpreter.remote.module2thread[module] {
             Some(self.get_thread_mut(id))
         } else {
@@ -1360,9 +1359,9 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
         }
     }
 
-    fn get_module_mut(&mut self, id: ModuleId) -> &mut ModuleCell {
+    fn get_module_mut(&mut self, id: ModuleId) -> &mut Module {
         assert!(self.is_module_local(id));
-        unsafe { self.interpreter.modules[id].cell.as_mut_unchecked() }
+        unsafe { self.interpreter.modules[id].local.as_mut_unchecked() }
     }
 
     fn depend_element(

@@ -1,5 +1,5 @@
 use crate::interpreter::{element::RemoteInModuleElementId, scope::RemoteInModuleScopeId};
-use slotmap::{SlotMap, new_key_type};
+use slotmap::new_key_type;
 use std::{
     cell::{OnceCell, UnsafeCell},
     sync::OnceLock,
@@ -7,7 +7,7 @@ use std::{
 
 use crate::interpreter::{
     element::{Element, ElementId, ElementRemote, InModuleElementId},
-    scope::{LocalInModuleScopeId, Scope, ScopeAuthored, ScopeRemote},
+    scope::{InModuleScopeId, Scope, ScopeAuthored, ScopeRemote},
 };
 
 use crate::utils::type_key::{SimrVec as KeySimrVec, Vec as KeyVec};
@@ -18,16 +18,16 @@ pub struct ModuleRemote {
     pub root_scope: OnceLock<RemoteInModuleScopeId>,
 }
 
-pub struct ModuleCell {
-    pub scopes: KeyVec<LocalInModuleScopeId, Scope>,
+pub struct Module {
+    pub scopes: KeyVec<InModuleScopeId, Scope>,
     pub elements: KeyVec<InModuleElementId, Element>,
     pub authored: Option<ScopeAuthored>,
     pub dependants: Vec<ElementId>,
-    pub root_scope: OnceCell<LocalInModuleScopeId>,
+    pub root_scope: OnceCell<InModuleScopeId>,
     pub unresolved_count: usize,
 }
 
-impl ModuleCell {
+impl Module {
     pub fn has_parsed(&self) -> bool {
         self.root_scope.get().is_some()
     }
@@ -36,15 +36,18 @@ impl ModuleCell {
     }
 }
 
-pub struct Module {
-    pub cell: UnsafeCell<ModuleCell>,
+pub struct ConcurrentModule {
+    /// # Safety
+    /// 
+    /// only access in one thread
+    pub local: UnsafeCell<Module>,
     pub remote: ModuleRemote,
 }
 
-impl Module {
+impl ConcurrentModule {
     pub fn new(source: ScopeAuthored) -> Self {
         Self {
-            cell: UnsafeCell::new(ModuleCell {
+            local: UnsafeCell::new(Module {
                 scopes: Default::default(),
                 elements: Default::default(),
                 authored: Some(source),

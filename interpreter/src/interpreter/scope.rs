@@ -1,46 +1,32 @@
 use std::collections::HashMap;
 
-use slotmap::new_key_type;
-
 use crate::{
-    interpreter::{
+    in_module_id, interpreter::{
         InModuleId, InterpreterLike,
         diagnose::Diagnostic,
         element::{InModuleElementId, RemoteInModuleElementId},
         file::FileId,
         module::ModuleId,
-    },
-    new_type,
-    utils::{concurrent_string_interner::StringId, moss},
+    }, new_type, utils::{concurrent_string_interner::StringId, moss}
 };
+
+new_type!(
+    #[derive(Clone, Copy,PartialEq,Debug)]
+    pub InModuleScopeId = usize
+);
+
+#[derive(Clone, Copy, Debug)]
+pub struct ScopeId {
+    pub in_module: InModuleScopeId,
+    pub module: ModuleId,
+}
+
+in_module_id!(InModuleScopeId,ScopeId);
 
 new_type!(
     #[derive(Clone, Copy,PartialEq,Debug)]
     pub RemoteInModuleScopeId = usize
 );
-
-#[derive(Clone, Copy, Debug)]
-pub enum ScopeSource {
-    Scope(moss::Scope<'static>),
-    File(moss::SourceFile<'static>),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ScopeAuthored {
-    pub source: ScopeSource,
-    pub file: FileId,
-}
-
-new_type!(
-    #[derive(Clone, Copy,PartialEq,Debug)]
-    pub LocalInModuleScopeId = usize
-);
-
-#[derive(Clone, Copy, Debug)]
-pub struct LocalScopeId {
-    pub in_module: LocalInModuleScopeId,
-    pub module: ModuleId,
-}
 
 #[derive(Clone, Copy)]
 pub struct RemoteScopeId {
@@ -48,20 +34,22 @@ pub struct RemoteScopeId {
     pub module: ModuleId,
 }
 
+in_module_id!(RemoteInModuleScopeId,RemoteScopeId);
+
 #[derive(Clone, Copy, Debug)]
-pub struct ScopeId {
-    pub local: LocalScopeId,
+pub struct ConcurrentScopeId {
+    pub local: ScopeId,
     pub remote: Option<RemoteInModuleScopeId>,
 }
 
-impl ScopeId {
+impl ConcurrentScopeId {
     pub fn get_remote(&self) -> Option<RemoteScopeId> {
         Some(RemoteScopeId {
             in_module: self.remote?,
             module: self.local.module,
         })
     }
-    pub fn from_local(interpreter: &(impl InterpreterLike + ?Sized), local: LocalScopeId) -> Self {
+    pub fn from_local(interpreter: &(impl InterpreterLike + ?Sized), local: ScopeId) -> Self {
         let scope = interpreter.get_scope(local);
         Self {
             local,
@@ -73,38 +61,27 @@ impl ScopeId {
     }
 }
 
-impl InModuleId for LocalInModuleScopeId {
-    type GlobalId = LocalScopeId;
-
-    fn global(self, module: ModuleId) -> Self::GlobalId {
-        Self::GlobalId {
-            in_module: self,
-            module,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct ScopeRemote {
-    pub elements: HashMap<StringId, RemoteInModuleElementId>,
-    pub parent: Option<RemoteInModuleScopeId>,
-    pub local_id: LocalInModuleScopeId,
-}
-
 #[derive(Debug)]
 pub struct Scope {
     pub elements: HashMap<StringId, InModuleElementId>,
-    pub parent: Option<LocalInModuleScopeId>,
-    pub children: Vec<LocalInModuleScopeId>,
+    pub parent: Option<InModuleScopeId>,
+    pub children: Vec<InModuleScopeId>,
     pub authored: Option<ScopeAuthored>,
     pub remote_id: Option<RemoteInModuleScopeId>,
     pub diagnoistics: Vec<Diagnostic>,
     pub module: ModuleId,
 }
 
+#[derive(Debug)]
+pub struct ScopeRemote {
+    pub elements: HashMap<StringId, RemoteInModuleElementId>,
+    pub parent: Option<RemoteInModuleScopeId>,
+    pub local_id: InModuleScopeId,
+}
+
 impl Scope {
     pub fn new(
-        parent: Option<LocalInModuleScopeId>,
+        parent: Option<InModuleScopeId>,
         authored: Option<ScopeAuthored>,
         module: ModuleId,
     ) -> Self {
@@ -121,4 +98,16 @@ impl Scope {
     pub fn get_file(&self) -> Option<FileId> {
         Some(self.authored?.file)
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ScopeSource {
+    Scope(moss::Scope<'static>),
+    File(moss::SourceFile<'static>),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ScopeAuthored {
+    pub source: ScopeSource,
+    pub file: FileId,
 }

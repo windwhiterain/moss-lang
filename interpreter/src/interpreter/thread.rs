@@ -1,22 +1,39 @@
 use std::{cell::UnsafeCell, collections::HashMap, path::PathBuf, sync::Arc};
 
-use slotmap::new_key_type;
+use type_sitter::UntypedNode;
 
 use crate::{
-    interpreter::{Depend, element::ElementId, file::FileId, module::ModuleId},
+    interpreter::{element::ElementId, file::FileId, module::ModuleId},
     new_type,
     utils::{async_lockfree_stack::Stack, moss},
 };
 
+new_type! {
+    #[derive(Clone,Copy,PartialEq,Debug)]
+    pub ThreadId = usize
+}
+
+pub struct ThreadLocal {
+    pub modules: Vec<ModuleId>,
+    pub add_module_delay: AddModuleDelay,
+}
+
+pub struct ThreadRemote {
+    pub channel: Arc<Stack<Signal>>,
+}
+
 pub struct Thread {
-    pub r#mut: UnsafeCell<ThreadMut>,
+    /// # Safety
+    /// 
+    /// only access in one thread
+    pub local: UnsafeCell<ThreadLocal>,
     pub remote: ThreadRemote,
 }
 
 impl Thread {
     pub fn new(module_ids: Vec<ModuleId>) -> Self {
         Self {
-            r#mut: UnsafeCell::new(ThreadMut {
+            local: UnsafeCell::new(ThreadLocal {
                 modules: module_ids,
                 add_module_delay: AddModuleDelay {
                     files: Default::default(),
@@ -30,23 +47,15 @@ impl Thread {
     }
 }
 
-pub struct ThreadMut {
-    pub modules: Vec<ModuleId>,
-    pub add_module_delay: AddModuleDelay,
-}
-
-pub struct ThreadRemote {
-    pub channel: Arc<Stack<Signal>>,
+pub struct Depend {
+    pub dependant: ElementId,
+    pub dependency: ElementId,
+    pub node: UntypedNode<'static>,
 }
 
 pub enum Signal {
     Depend(Depend),
     Resolve(ElementId),
-}
-
-new_type! {
-    #[derive(Clone,Copy,PartialEq,Debug)]
-    pub ThreadId = usize
 }
 
 pub struct AddModuleDelay {

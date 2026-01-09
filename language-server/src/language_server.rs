@@ -21,7 +21,7 @@ use tower_lsp::{
 use moss_interpreter::{
     interpreter::{
         Interpreter, InterpreterLike, InModuleId, Node, UntypedNode, diagnose::Diagnostic,
-        file::FileId, scope::LocalScopeId, value::ContextedValue,
+        file::FileId, scope::ScopeId, value::ContextedValue,
     },
     utils::erase_mut,
 };
@@ -102,7 +102,7 @@ impl LanguageServer {
                                 DiagnosticSeverity::ERROR,
                             ));
                     }
-                    Diagnostic::ElementKeyRedundancy { source } => {
+                    Diagnostic::RedundantElementKey { source } => {
                         self.lsp_diagnostics
                             .push(self.language_server.make_diagnostic(
                                 *source,
@@ -172,7 +172,7 @@ impl LanguageServer {
                     }
                 };
             }
-            fn traverse(&mut self, scope_id: LocalScopeId) {
+            fn traverse(&mut self, scope_id: ScopeId) {
                 let scope = self.interpreter.get_scope(scope_id);
                 for diagnostic in &scope.diagnoistics {
                     self.diagnose(diagnostic);

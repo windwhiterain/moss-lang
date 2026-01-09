@@ -1,9 +1,6 @@
 {
 	"folders": [
 		{
-			"path": "tree-sitter-moss"
-		},
-		{
 			"path": "."
 		}
 	]

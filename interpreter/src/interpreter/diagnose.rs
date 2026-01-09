@@ -7,7 +7,7 @@ pub enum Diagnostic {
     GrammarError {
         source: UntypedNode<'static>,
     },
-    ElementKeyRedundancy {
+    RedundantElementKey {
         source: UntypedNode<'static>,
     },
     FailedFindElement {

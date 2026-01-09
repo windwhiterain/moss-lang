@@ -28,7 +28,7 @@ impl File {
             .set_language(&tree_sitter_moss::LANGUAGE.into())
             .unwrap();
         let tree = Tree::wrap(parser.parse(&text, None).unwrap());
-        log::error!("sytax:\n{}",tree.root_node().to_sexp());
+        log::error!("syntax {}:\n{}", path.display(), tree.root_node().to_sexp());
         Self {
             text,
             parser,
@@ -40,7 +40,7 @@ impl File {
     pub fn update(&mut self, interpreter: &impl InterpreterLike) {
         self.text = fs::read_to_string(interpreter.get_worksapce_path().join(&self.path)).unwrap();
         self.tree = Tree::wrap(self.parser.parse(&self.text, None).unwrap());
-        log::error!("sytax:\n{}",self.tree.root_node().to_sexp());
+        log::error!("sytax:\n{}", self.tree.root_node().to_sexp());
         self.is_module = None;
     }
 }

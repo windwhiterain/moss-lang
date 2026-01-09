@@ -4,8 +4,8 @@ use std::{fmt, ops::Deref};
 use crate::{
     interpreter::{
         InterpreterLike,
-        element::{Element, ElementId, InModuleElementId},
-        scope::{LocalScopeId, Scope, ScopeId},
+        element::ElementId,
+        scope::{ConcurrentScopeId, ScopeId},
     },
     utils::{concurrent_string_interner::StringId, moss},
 };
@@ -16,13 +16,13 @@ pub enum Value {
     IntTy,
     String(StringId),
     StringTy,
-    Scope(ScopeId),
+    Scope(ConcurrentScopeId),
     ScopeTy,
     TyTy,
     Builtin(Builtin),
     Name {
         name: StringId,
-        scope: LocalScopeId,
+        scope: ScopeId,
         node: moss::Name<'static>,
     },
     Find {
@@ -70,7 +70,7 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
             Value::ScopeTy => write!(f, "Scope"),
             Value::TyTy => write!(f, "Type"),
             Value::Builtin(builtin) => write!(f, "@{}", builtin),
-            Value::Name { name, scope, .. } => {
+            Value::Name { name, .. } => {
                 write!(f, "{}", self.ctx.id2str(name).deref())
             }
             Value::Find {

@@ -1,5 +1,4 @@
 use crossbeam::atomic::AtomicCell;
-use slotmap::new_key_type;
 use smallvec::SmallVec;
 use type_sitter::UntypedNode;
 
@@ -9,7 +8,7 @@ use crate::{
         InModuleId,
         diagnose::Diagnostic,
         module::ModuleId,
-        scope::LocalInModuleScopeId,
+        scope::InModuleScopeId,
         value::{TypedValue, Value},
     },
     new_type,
@@ -83,7 +82,7 @@ pub struct Element {
     pub key: ElementKey,
     pub resolved_value: TypedValue,
     pub raw_value: Value,
-    pub scope: LocalInModuleScopeId,
+    pub scope: InModuleScopeId,
     pub dependency_count: i64,
     pub dependants: SmallVec<[Dependant; 4]>,
     pub resolved: bool,
@@ -92,14 +91,8 @@ pub struct Element {
     pub diagnoistics: Vec<Diagnostic>,
 }
 
-#[derive(Debug)]
-pub struct ElementAuthored {
-    pub value_node: moss::Value<'static>,
-    pub key_node: Option<moss::Name<'static>>,
-}
-
 impl Element {
-    pub fn new<'tree>(key: ElementKey, scope: LocalInModuleScopeId) -> Self {
+    pub fn new<'tree>(key: ElementKey, scope: InModuleScopeId) -> Self {
         Self {
             key,
             resolved_value: TypedValue::err(),
@@ -115,14 +108,14 @@ impl Element {
     }
 }
 
+#[derive(Debug)]
+pub struct ElementAuthored {
+    pub value_node: moss::Value<'static>,
+    pub key_node: Option<moss::Name<'static>>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Dependant {
     pub element_id: ElementId,
-    pub node: UntypedNode<'static>,
-}
-
-pub struct Depend {
-    pub dependant: ElementId,
-    pub dependency: ElementId,
     pub node: UntypedNode<'static>,
 }
