@@ -321,7 +321,7 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                             self.depend_element(
                                 depend.dependant,
                                 ConcurrentElementId::Local(depend.dependency),
-                                depend.node,
+                                depend.source,
                                 false,
                             );
                         }
@@ -337,7 +337,7 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                                 .dependants
                                 .push(Dependant {
                                     element_id: depend.dependant,
-                                    node: depend.node,
+                                    source: depend.source,
                                 });
                         }
                         Signal::Resolve(local_element_id) => {
@@ -371,8 +371,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
     fn increase_workload(&mut self);
     fn decrease_workload(&mut self) -> usize;
     fn str2id(&mut self, str: &str) -> StringId;
-    fn get_node_str_id<'tree>(&mut self, node: &impl Node<'tree>, file: FileId) -> StringId {
-        let str = erase(self.get_node_str(node, file));
+    fn get_source_str_id<'tree>(&mut self, source: &impl Node<'tree>, file: FileId) -> StringId {
+        let str = erase(self.get_source_str(source, file));
         self.str2id(str)
     }
     /// # Panic
@@ -477,10 +477,10 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     continue;
                 };
 
-                let name = self.get_node_str_id(&key, authored.file);
+                let name = self.get_source_str_id(&key, authored.file);
                 let element_authored = ElementAuthored {
-                    value_node: erase_struct!(value),
-                    key_node: Some(erase_struct!(key)),
+                    value_source: erase_struct!(value),
+                    key_source: Some(erase_struct!(key)),
                 };
                 let _ = self.parse_element(
                     ElementKey::Name(name),
@@ -515,7 +515,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         result: NodeResult<'static, T>,
     ) -> Option<T> {
         match result {
-            Ok(node) => Some(node),
+            Ok(source) => Some(source),
             Err(err) => {
                 self.diagnose(
                     location,
@@ -531,15 +531,15 @@ pub trait InterpreterLikeMut: InterpreterLike {
     /// - when concurrent, element is not in local thread.
     fn parse_value(
         &mut self,
-        node: NodeResult<'static, moss::Value<'static>>,
+        source: NodeResult<'static, moss::Value<'static>>,
         element_id: ElementId,
         file_id: FileId,
     ) -> Option<Value> {
-        let node = self.grammar_error(Location::Element(element_id), node)?;
-        let node_child = self.grammar_error(Location::Element(element_id), node.child())?;
+        let source = self.grammar_error(Location::Element(element_id), source)?;
+        let source_child = self.grammar_error(Location::Element(element_id), source.child())?;
         let element = erase_mut(self.get_element_mut(element_id));
         let scope_id = element.scope.global(element_id.module);
-        let value = match node_child {
+        let value = match source_child {
             moss::ValueChild::Bracket(bracket) => self
                 .parse_value(bracket.value(), element_id, file_id)
                 .unwrap_or(Value::Err),
@@ -551,8 +551,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
                         ElementKey::Temp,
                         scope_id,
                         ElementAuthored {
-                            value_node: func,
-                            key_node: None,
+                            value_source: func,
+                            key_source: None,
                         },
                         file_id,
                     )
@@ -562,8 +562,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
                         ElementKey::Temp,
                         scope_id,
                         ElementAuthored {
-                            value_node: param,
-                            key_node: None,
+                            value_source: param,
+                            key_source: None,
                         },
                         file_id,
                     )
@@ -594,28 +594,28 @@ pub trait InterpreterLikeMut: InterpreterLike {
                         ElementKey::Temp,
                         scope_id,
                         ElementAuthored {
-                            value_node: value,
-                            key_node: None,
+                            value_source: value,
+                            key_source: None,
                         },
                         file_id,
                     )
                     .unwrap();
                 Value::Find {
                     value: element,
-                    key: self.get_node_str_id(&name, file_id),
+                    key: self.get_source_str_id(&name, file_id),
                     key_source: name,
                     source: find,
                 }
             }
             moss::ValueChild::Int(int) => {
-                Value::Int(self.get_node_str(&int, file_id).parse().unwrap())
+                Value::Int(self.get_source_str(&int, file_id).parse().unwrap())
             }
             moss::ValueChild::Name(name) => {
-                let string_id = self.get_node_str_id(&name, file_id);
+                let string_id = self.get_source_str_id(&name, file_id);
                 Value::Name {
                     name: string_id,
                     scope: scope_id,
-                    node: name,
+                    source: name,
                 }
             }
             moss::ValueChild::String(string) => {
@@ -628,7 +628,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                         .grammar_error(Location::Element(element_id), content.child())?
                     {
                         moss::StringContentChild::StringEscape(string_escape) => {
-                            match erase(self).get_node_str(&string_escape, file_id) {
+                            match erase(self).get_source_str(&string_escape, file_id) {
                                 "\\\"" => Some("\""),
                                 "\\\\" => Some("\\"),
                                 "\\n" => Some("\n"),
@@ -646,7 +646,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                             }
                         }
                         moss::StringContentChild::StringRaw(string_raw) => {
-                            Some(erase(self).get_node_str(&string_raw, file_id))
+                            Some(erase(self).get_source_str(&string_raw, file_id))
                         }
                     }?;
                     if let Some(value) = &mut value {
@@ -689,7 +689,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let id = match key {
             ElementKey::Name(name) => match scope.elements.entry(name) {
                 std::collections::hash_map::Entry::Occupied(occupied_entry) => {
-                    if let Some(key_source) = authored.key_node {
+                    if let Some(key_source) = authored.key_source {
                         self.diagnose(
                             Location::Scope(scope_id),
                             Diagnostic::RedundantElementKey {
@@ -708,7 +708,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             ElementKey::Temp => new_id(self),
         };
         let raw_value = self
-            .parse_value(Ok(authored.value_node), id, file)
+            .parse_value(Ok(authored.value_source), id, file)
             .unwrap_or(Value::Err);
         let element = self.get_element_mut(id);
         element.raw_value = raw_value;
@@ -763,7 +763,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         &mut self,
         dependant_id: ElementId,
         dependency_id: ConcurrentElementId,
-        node: UntypedNode<'static>,
+        source: UntypedNode<'static>,
         local: bool,
     );
     /// # Panic
@@ -773,11 +773,11 @@ pub trait InterpreterLikeMut: InterpreterLike {
         &mut self,
         dependant_id: ElementId,
         dependency_id: ConcurrentElementId,
-        node: UntypedNode<'static>,
+        source: UntypedNode<'static>,
     ) -> Option<TypedValue> {
         let value = self.get_element_value(dependency_id);
         if value.is_none() {
-            self.depend_element(dependant_id, dependency_id, node, true);
+            self.depend_element(dependant_id, dependency_id, source, true);
         }
         value
     }
@@ -789,11 +789,11 @@ pub trait InterpreterLikeMut: InterpreterLike {
         dependency_id: ElementId,
     ) -> Option<TypedValue> {
         let dependency = self.get_element(dependency_id);
-        let node = dependency.authored.as_ref().unwrap().value_node.upcast();
+        let source = dependency.authored.as_ref().unwrap().value_source.upcast();
         self.depend_element_value(
             dependant_id,
             ConcurrentElementId::Local(dependency_id),
-            node,
+            source,
         )
     }
     fn resolve_element(&mut self, id: ElementId);
@@ -833,18 +833,18 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 value: Value::TyTy,
                 r#type: Value::TyTy,
             },
-            Value::Name { name, scope, node } => {
+            Value::Name { name, scope, source } => {
                 if let Some(ref_element_id) = self.find_element_local(scope, name, true) {
                     self.depend_element_value(
                         element_id,
                         ConcurrentElementId::Local(ref_element_id),
-                        node.upcast(),
+                        source.upcast(),
                     )?
                 } else {
                     self.diagnose(
                         Location::Element(element_id),
                         Diagnostic::FailedFindElement {
-                            source: node.upcast(),
+                            source: source.upcast(),
                         },
                     );
                     return None;
@@ -853,8 +853,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
             Value::Find {
                 value: ref_element_id,
                 key,
-                key_source: key_node,
-                source: node,
+                key_source,
+                source,
             } => {
                 let value = self.depend_child_element_value(element_id, ref_element_id)?;
                 match value.value {
@@ -864,13 +864,13 @@ pub trait InterpreterLikeMut: InterpreterLike {
                             self.depend_element_value(
                                 element_id,
                                 find_element_id,
-                                key_node.upcast(),
+                                key_source.upcast(),
                             )?
                         } else {
                             self.diagnose(
                                 Location::Element(element_id),
                                 Diagnostic::FailedFindElement {
-                                    source: key_node.upcast(),
+                                    source: key_source.upcast(),
                                 },
                             );
                             return None;
@@ -880,7 +880,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                         self.diagnose(
                             Location::Element(element_id),
                             Diagnostic::CanNotFindIn {
-                                source: node.upcast(),
+                                source: source.upcast(),
                                 value: value.value,
                             },
                         );
@@ -916,7 +916,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                                 .authored
                                                 .as_ref()
                                                 .unwrap()
-                                                .value_node
+                                                .value_source
                                                 .upcast(),
                                         },
                                     );
@@ -1047,10 +1047,10 @@ pub trait InterpreterLike {
     fn get_file(&self, id: FileId) -> &File;
     fn find_file(&self, path: impl AsRef<Path>) -> Option<FileId>;
     fn id2str(&self, id: StringId) -> impl Deref<Target = str>;
-    fn get_node_str<'tree>(&self, node: &impl Node<'tree>, file: FileId) -> &str {
+    fn get_source_str<'tree>(&self, source: &impl Node<'tree>, file: FileId) -> &str {
         let file = self.get_file(file);
-        let start = node.start_byte();
-        let end = node.end_byte();
+        let start = source.start_byte();
+        let end = source.end_byte();
         &file.text[start..end]
     }
     fn get_thread_remote(&self, id: ThreadId) -> &ThreadRemote;
@@ -1330,7 +1330,7 @@ impl InterpreterLikeMut for Interpreter {
         &mut self,
         dependant_id: ElementId,
         dependency_id: ConcurrentElementId,
-        node: UntypedNode<'static>,
+        source: UntypedNode<'static>,
         local: bool,
     ) {
         if local {
@@ -1342,7 +1342,7 @@ impl InterpreterLikeMut for Interpreter {
                 let dependency = erase_mut(self.get_element_mut(local_element_id));
                 dependency.dependants.push(Dependant {
                     element_id: dependant_id,
-                    node,
+                    source,
                 });
             }
             _ => unimplemented!(),
@@ -1413,7 +1413,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
         &mut self,
         dependant_id: ElementId,
         dependency_id: ConcurrentElementId,
-        node: UntypedNode<'static>,
+        source: UntypedNode<'static>,
         local: bool,
     ) {
         if local {
@@ -1440,14 +1440,14 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
                     }
                     dependency.dependants.push(Dependant {
                         element_id: dependant_id,
-                        node,
+                        source,
                     });
                 } else {
                     if let Some(thread) = self.get_thread_remote_of(local_element_id.module) {
                         thread.channel.push(Signal::Depend(Depend {
                             dependant: dependant_id,
                             dependency: local_element_id,
-                            node,
+                            source,
                         }));
                         self.increase_workload();
                     }
@@ -1459,7 +1459,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
                     thread.channel.push(Signal::Depend(Depend {
                         dependant: dependant_id,
                         dependency: dependency.deref().local_id.global(remote_element_id.module),
-                        node,
+                        source,
                     }));
                     self.increase_workload();
                 }

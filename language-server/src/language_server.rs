@@ -185,7 +185,7 @@ impl LanguageServer {
                         self.diagnose(diagnoistic);
                     }
                     if let Some(authored) = &element.authored {
-                        if let Some(key_node) = authored.key_node {
+                        if let Some(key_node) = authored.key_source {
                             self.lsp_diagnostics
                                 .push(self.language_server.make_diagnostic(
                                     key_node.upcast(),

@@ -23,7 +23,7 @@ pub enum Value {
     Name {
         name: StringId,
         scope: ScopeId,
-        node: moss::Name<'static>,
+        source: moss::Name<'static>,
     },
     Find {
         value: ElementId,

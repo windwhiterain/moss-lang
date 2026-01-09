@@ -51,7 +51,7 @@ impl Thread {
 pub struct Depend {
     pub dependant: ElementId,
     pub dependency: ElementId,
-    pub node: UntypedNode<'static>,
+    pub source: UntypedNode<'static>,
 }
 
 pub enum Signal {

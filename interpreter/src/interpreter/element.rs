@@ -110,12 +110,12 @@ impl Element {
 
 #[derive(Debug)]
 pub struct ElementAuthored {
-    pub value_node: moss::Value<'static>,
-    pub key_node: Option<moss::Name<'static>>,
+    pub value_source: moss::Value<'static>,
+    pub key_source: Option<moss::Name<'static>>,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Dependant {
     pub element_id: ElementId,
-    pub node: UntypedNode<'static>,
+    pub source: UntypedNode<'static>,
 }
