@@ -224,7 +224,7 @@ impl LanguageServer {
             return;
         };
         let module = interpreter.get_module(module_id);
-        let Some(scope_id) = module.root_scope.get() else {
+        let Some(scope_id) = module.root_scope else {
             return;
         };
 
@@ -258,7 +258,8 @@ impl LanguageServer {
             };
             let mut interpreter = interpreter.write().await;
             interpreter.clear();
-            interpreter.add_module(entry_path);
+            interpreter.init();
+            interpreter.add_module(Some(entry_path));
             interpreter.run().await;
         }
         {

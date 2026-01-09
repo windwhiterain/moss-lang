@@ -110,170 +110,6 @@ impl<'tree> ::type_sitter::Node<'tree> for Bracket<'tree> {
         self.0
     }
 }
-#[doc = "Typed node `builtin`\n\nThis node has a named child of type `{builtin_add | builtin_if | builtin_mod}`:\n\n- [`BuiltinAdd`]\n- [`BuiltinIf`]\n- [`BuiltinMod`]\n\n"]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(transparent)]
-#[allow(non_camel_case_types)]
-pub struct Builtin<'tree>(::type_sitter::raw::Node<'tree>);
-#[automatically_derived]
-#[allow(unused)]
-impl<'tree> Builtin<'tree> {}
-#[automatically_derived]
-impl<'tree> ::type_sitter::HasChild<'tree> for Builtin<'tree> {
-    type Child = anon_unions::BuiltinAdd_BuiltinIf_BuiltinMod<'tree>;
-}
-#[automatically_derived]
-impl<'tree> ::type_sitter::Node<'tree> for Builtin<'tree> {
-    type WithLifetime<'a> = Builtin<'a>;
-    const KIND: &'static str = "builtin";
-    #[inline]
-    fn try_from_raw(
-        node: ::type_sitter::raw::Node<'tree>,
-    ) -> ::type_sitter::NodeResult<'tree, Self> {
-        if node.kind() == "builtin" {
-            Ok(Self(node))
-        } else {
-            Err(::type_sitter::IncorrectKind::new::<Self>(node))
-        }
-    }
-    #[inline]
-    unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
-        debug_assert_eq!(node.kind(), "builtin");
-        Self(node)
-    }
-    #[inline]
-    fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
-        &self.0
-    }
-    #[inline]
-    fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
-        &mut self.0
-    }
-    #[inline]
-    fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
-        self.0
-    }
-}
-#[doc = "Typed node `builtin_add`\n\nThis node has no named children\n"]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(transparent)]
-#[allow(non_camel_case_types)]
-pub struct BuiltinAdd<'tree>(::type_sitter::raw::Node<'tree>);
-#[automatically_derived]
-#[allow(unused)]
-impl<'tree> BuiltinAdd<'tree> {}
-#[automatically_derived]
-impl<'tree> ::type_sitter::Node<'tree> for BuiltinAdd<'tree> {
-    type WithLifetime<'a> = BuiltinAdd<'a>;
-    const KIND: &'static str = "builtin_add";
-    #[inline]
-    fn try_from_raw(
-        node: ::type_sitter::raw::Node<'tree>,
-    ) -> ::type_sitter::NodeResult<'tree, Self> {
-        if node.kind() == "builtin_add" {
-            Ok(Self(node))
-        } else {
-            Err(::type_sitter::IncorrectKind::new::<Self>(node))
-        }
-    }
-    #[inline]
-    unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
-        debug_assert_eq!(node.kind(), "builtin_add");
-        Self(node)
-    }
-    #[inline]
-    fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
-        &self.0
-    }
-    #[inline]
-    fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
-        &mut self.0
-    }
-    #[inline]
-    fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
-        self.0
-    }
-}
-#[doc = "Typed node `builtin_if`\n\nThis node has no named children\n"]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(transparent)]
-#[allow(non_camel_case_types)]
-pub struct BuiltinIf<'tree>(::type_sitter::raw::Node<'tree>);
-#[automatically_derived]
-#[allow(unused)]
-impl<'tree> BuiltinIf<'tree> {}
-#[automatically_derived]
-impl<'tree> ::type_sitter::Node<'tree> for BuiltinIf<'tree> {
-    type WithLifetime<'a> = BuiltinIf<'a>;
-    const KIND: &'static str = "builtin_if";
-    #[inline]
-    fn try_from_raw(
-        node: ::type_sitter::raw::Node<'tree>,
-    ) -> ::type_sitter::NodeResult<'tree, Self> {
-        if node.kind() == "builtin_if" {
-            Ok(Self(node))
-        } else {
-            Err(::type_sitter::IncorrectKind::new::<Self>(node))
-        }
-    }
-    #[inline]
-    unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
-        debug_assert_eq!(node.kind(), "builtin_if");
-        Self(node)
-    }
-    #[inline]
-    fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
-        &self.0
-    }
-    #[inline]
-    fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
-        &mut self.0
-    }
-    #[inline]
-    fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
-        self.0
-    }
-}
-#[doc = "Typed node `builtin_mod`\n\nThis node has no named children\n"]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(transparent)]
-#[allow(non_camel_case_types)]
-pub struct BuiltinMod<'tree>(::type_sitter::raw::Node<'tree>);
-#[automatically_derived]
-#[allow(unused)]
-impl<'tree> BuiltinMod<'tree> {}
-#[automatically_derived]
-impl<'tree> ::type_sitter::Node<'tree> for BuiltinMod<'tree> {
-    type WithLifetime<'a> = BuiltinMod<'a>;
-    const KIND: &'static str = "builtin_mod";
-    #[inline]
-    fn try_from_raw(
-        node: ::type_sitter::raw::Node<'tree>,
-    ) -> ::type_sitter::NodeResult<'tree, Self> {
-        if node.kind() == "builtin_mod" {
-            Ok(Self(node))
-        } else {
-            Err(::type_sitter::IncorrectKind::new::<Self>(node))
-        }
-    }
-    #[inline]
-    unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
-        debug_assert_eq!(node.kind(), "builtin_mod");
-        Self(node)
-    }
-    #[inline]
-    fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
-        &self.0
-    }
-    #[inline]
-    fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
-        &mut self.0
-    }
-    #[inline]
-    fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
-        self.0
-    }
-}
 #[doc = "Typed node `call`\n\nThis node has these fields:\n\n- `func`: `value` ([`Value`])\n- `param`: `value` ([`Value`])\n"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -919,7 +755,7 @@ impl<'tree> ::type_sitter::Node<'tree> for StringRaw<'tree> {
         self.0
     }
 }
-#[doc = "Typed node `value`\n\nThis node has a named child of type `{bracket | builtin | call | dict | find | int | name | scope | set | string}`:\n\n- [`Bracket`]\n- [`Builtin`]\n- [`Call`]\n- [`Dict`]\n- [`Find`]\n- [`Int`]\n- [`Name`]\n- [`Scope`]\n- [`Set`]\n- [`String`]\n\n"]
+#[doc = "Typed node `value`\n\nThis node has a named child of type `{bracket | call | dict | find | int | name | scope | set | string}`:\n\n- [`Bracket`]\n- [`Call`]\n- [`Dict`]\n- [`Find`]\n- [`Int`]\n- [`Name`]\n- [`Scope`]\n- [`Set`]\n- [`String`]\n\n"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 #[allow(non_camel_case_types)]
@@ -929,7 +765,7 @@ pub struct Value<'tree>(::type_sitter::raw::Node<'tree>);
 impl<'tree> Value<'tree> {}
 #[automatically_derived]
 impl<'tree> ::type_sitter::HasChild<'tree> for Value<'tree> {
-    type Child = anon_unions::Bracket_Builtin_Call_Dict_Find_Int_Name_Scope_Set_String<'tree>;
+    type Child = anon_unions::Bracket_Call_Dict_Find_Int_Name_Scope_Set_String<'tree>;
 }
 #[automatically_derived]
 impl<'tree> ::type_sitter::Node<'tree> for Value<'tree> {
@@ -1370,12 +1206,11 @@ pub mod symbols {
 pub mod anon_unions {
     #[allow(unused_imports)]
     use super::*;
-    #[doc = "One of `{bracket | builtin | call | dict | find | int | name | scope | set | string}`:\n- [`Bracket`]\n- [`Builtin`]\n- [`Call`]\n- [`Dict`]\n- [`Find`]\n- [`Int`]\n- [`Name`]\n- [`Scope`]\n- [`Set`]\n- [`String`]"]
+    #[doc = "One of `{bracket | call | dict | find | int | name | scope | set | string}`:\n- [`Bracket`]\n- [`Call`]\n- [`Dict`]\n- [`Find`]\n- [`Int`]\n- [`Name`]\n- [`Scope`]\n- [`Set`]\n- [`String`]"]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     #[allow(non_camel_case_types)]
-    pub enum Bracket_Builtin_Call_Dict_Find_Int_Name_Scope_Set_String<'tree> {
+    pub enum Bracket_Call_Dict_Find_Int_Name_Scope_Set_String<'tree> {
         Bracket(Bracket<'tree>),
-        Builtin(Builtin<'tree>),
         Call(Call<'tree>),
         Dict(Dict<'tree>),
         Find(Find<'tree>),
@@ -1387,22 +1222,12 @@ pub mod anon_unions {
     }
     #[automatically_derived]
     #[allow(unused)]
-    impl<'tree> Bracket_Builtin_Call_Dict_Find_Int_Name_Scope_Set_String<'tree> {
+    impl<'tree> Bracket_Call_Dict_Find_Int_Name_Scope_Set_String<'tree> {
         #[doc = "Returns the node if it is of type `bracket` ([`Bracket`]), otherwise returns `None`"]
         #[inline]
         pub fn as_bracket(self) -> ::std::option::Option<Bracket<'tree>> {
             #[allow(irrefutable_let_patterns)]
             if let Self::Bracket(x) = self {
-                ::std::option::Option::Some(x)
-            } else {
-                ::std::option::Option::None
-            }
-        }
-        #[doc = "Returns the node if it is of type `builtin` ([`Builtin`]), otherwise returns `None`"]
-        #[inline]
-        pub fn as_builtin(self) -> ::std::option::Option<Builtin<'tree>> {
-            #[allow(irrefutable_let_patterns)]
-            if let Self::Builtin(x) = self {
                 ::std::option::Option::Some(x)
             } else {
                 ::std::option::Option::None
@@ -1490,12 +1315,10 @@ pub mod anon_unions {
         }
     }
     #[automatically_derived]
-    impl<'tree> ::type_sitter::Node<'tree>
-        for Bracket_Builtin_Call_Dict_Find_Int_Name_Scope_Set_String<'tree>
-    {
-        type WithLifetime<'a> = Bracket_Builtin_Call_Dict_Find_Int_Name_Scope_Set_String<'a>;
+    impl<'tree> ::type_sitter::Node<'tree> for Bracket_Call_Dict_Find_Int_Name_Scope_Set_String<'tree> {
+        type WithLifetime<'a> = Bracket_Call_Dict_Find_Int_Name_Scope_Set_String<'a>;
         const KIND: &'static str =
-            "{bracket | builtin | call | dict | find | int | name | scope | set | string}";
+            "{bracket | call | dict | find | int | name | scope | set | string}";
         #[inline]
         fn try_from_raw(
             node: ::type_sitter::raw::Node<'tree>,
@@ -1504,11 +1327,6 @@ pub mod anon_unions {
                 "bracket" => Ok(unsafe {
                     Self::Bracket(
                         <Bracket<'tree> as ::type_sitter::Node<'tree>>::from_raw_unchecked(node),
-                    )
-                }),
-                "builtin" => Ok(unsafe {
-                    Self::Builtin(
-                        <Builtin<'tree> as ::type_sitter::Node<'tree>>::from_raw_unchecked(node),
                     )
                 }),
                 "call" => Ok(unsafe {
@@ -1554,7 +1372,6 @@ pub mod anon_unions {
         fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
             match self {
                 Self::Bracket(x) => ::type_sitter::Node::raw(x),
-                Self::Builtin(x) => ::type_sitter::Node::raw(x),
                 Self::Call(x) => ::type_sitter::Node::raw(x),
                 Self::Dict(x) => ::type_sitter::Node::raw(x),
                 Self::Find(x) => ::type_sitter::Node::raw(x),
@@ -1569,7 +1386,6 @@ pub mod anon_unions {
         fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
             match self {
                 Self::Bracket(x) => ::type_sitter::Node::raw_mut(x),
-                Self::Builtin(x) => ::type_sitter::Node::raw_mut(x),
                 Self::Call(x) => ::type_sitter::Node::raw_mut(x),
                 Self::Dict(x) => ::type_sitter::Node::raw_mut(x),
                 Self::Find(x) => ::type_sitter::Node::raw_mut(x),
@@ -1584,7 +1400,6 @@ pub mod anon_unions {
         fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
             match self {
                 Self::Bracket(x) => x.into_raw(),
-                Self::Builtin(x) => x.into_raw(),
                 Self::Call(x) => x.into_raw(),
                 Self::Dict(x) => x.into_raw(),
                 Self::Find(x) => x.into_raw(),
@@ -1593,100 +1408,6 @@ pub mod anon_unions {
                 Self::Scope(x) => x.into_raw(),
                 Self::Set(x) => x.into_raw(),
                 Self::String(x) => x.into_raw(),
-            }
-        }
-    }
-    #[doc = "One of `{builtin_add | builtin_if | builtin_mod}`:\n- [`BuiltinAdd`]\n- [`BuiltinIf`]\n- [`BuiltinMod`]"]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    #[allow(non_camel_case_types)]
-    pub enum BuiltinAdd_BuiltinIf_BuiltinMod<'tree> {
-        BuiltinAdd(BuiltinAdd<'tree>),
-        BuiltinIf(BuiltinIf<'tree>),
-        BuiltinMod(BuiltinMod<'tree>),
-    }
-    #[automatically_derived]
-    #[allow(unused)]
-    impl<'tree> BuiltinAdd_BuiltinIf_BuiltinMod<'tree> {
-        #[doc = "Returns the node if it is of type `builtin_add` ([`BuiltinAdd`]), otherwise returns `None`"]
-        #[inline]
-        pub fn as_builtin_add(self) -> ::std::option::Option<BuiltinAdd<'tree>> {
-            #[allow(irrefutable_let_patterns)]
-            if let Self::BuiltinAdd(x) = self {
-                ::std::option::Option::Some(x)
-            } else {
-                ::std::option::Option::None
-            }
-        }
-        #[doc = "Returns the node if it is of type `builtin_if` ([`BuiltinIf`]), otherwise returns `None`"]
-        #[inline]
-        pub fn as_builtin_if(self) -> ::std::option::Option<BuiltinIf<'tree>> {
-            #[allow(irrefutable_let_patterns)]
-            if let Self::BuiltinIf(x) = self {
-                ::std::option::Option::Some(x)
-            } else {
-                ::std::option::Option::None
-            }
-        }
-        #[doc = "Returns the node if it is of type `builtin_mod` ([`BuiltinMod`]), otherwise returns `None`"]
-        #[inline]
-        pub fn as_builtin_mod(self) -> ::std::option::Option<BuiltinMod<'tree>> {
-            #[allow(irrefutable_let_patterns)]
-            if let Self::BuiltinMod(x) = self {
-                ::std::option::Option::Some(x)
-            } else {
-                ::std::option::Option::None
-            }
-        }
-    }
-    #[automatically_derived]
-    impl<'tree> ::type_sitter::Node<'tree> for BuiltinAdd_BuiltinIf_BuiltinMod<'tree> {
-        type WithLifetime<'a> = BuiltinAdd_BuiltinIf_BuiltinMod<'a>;
-        const KIND: &'static str = "{builtin_add | builtin_if | builtin_mod}";
-        #[inline]
-        fn try_from_raw(
-            node: ::type_sitter::raw::Node<'tree>,
-        ) -> ::type_sitter::NodeResult<'tree, Self> {
-            match node.kind() {
-                "builtin_add" => Ok(unsafe {
-                    Self::BuiltinAdd(
-                        <BuiltinAdd<'tree> as ::type_sitter::Node<'tree>>::from_raw_unchecked(node),
-                    )
-                }),
-                "builtin_if" => Ok(unsafe {
-                    Self::BuiltinIf(
-                        <BuiltinIf<'tree> as ::type_sitter::Node<'tree>>::from_raw_unchecked(node),
-                    )
-                }),
-                "builtin_mod" => Ok(unsafe {
-                    Self::BuiltinMod(
-                        <BuiltinMod<'tree> as ::type_sitter::Node<'tree>>::from_raw_unchecked(node),
-                    )
-                }),
-                _ => Err(::type_sitter::IncorrectKind::new::<Self>(node)),
-            }
-        }
-        #[inline]
-        fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
-            match self {
-                Self::BuiltinAdd(x) => ::type_sitter::Node::raw(x),
-                Self::BuiltinIf(x) => ::type_sitter::Node::raw(x),
-                Self::BuiltinMod(x) => ::type_sitter::Node::raw(x),
-            }
-        }
-        #[inline]
-        fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
-            match self {
-                Self::BuiltinAdd(x) => ::type_sitter::Node::raw_mut(x),
-                Self::BuiltinIf(x) => ::type_sitter::Node::raw_mut(x),
-                Self::BuiltinMod(x) => ::type_sitter::Node::raw_mut(x),
-            }
-        }
-        #[inline]
-        fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
-            match self {
-                Self::BuiltinAdd(x) => x.into_raw(),
-                Self::BuiltinIf(x) => x.into_raw(),
-                Self::BuiltinMod(x) => x.into_raw(),
             }
         }
     }

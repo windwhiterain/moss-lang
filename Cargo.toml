@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["language-server","interpreter","zed-extension","extern/arc-swap","tree-sitter-moss"]
-exclude = []
+members = ["language-server","interpreter","zed-extension","extern/arc-swap"]
+exclude = ["tree-sitter-moss"]
 
 [workspace.dependencies]
 log = "0.4.28"

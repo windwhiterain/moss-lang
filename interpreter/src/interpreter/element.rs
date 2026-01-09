@@ -7,6 +7,7 @@ use crate::{
     interpreter::{
         InModuleId,
         diagnose::Diagnostic,
+        file::FileId,
         module::ModuleId,
         scope::InModuleScopeId,
         value::{TypedValue, Value},
@@ -66,11 +67,11 @@ pub struct ElementRemote {
 }
 
 impl ElementRemote {
-    pub fn new(local_id: InModuleElementId) -> Self {
+    pub fn new(local_id: InModuleElementId, value: TypedValue,resolved:bool) -> Self {
         Self {
             cell: AtomicCell::new(ElementRemoteCell {
-                value: TypedValue::err(),
-                resolved: false,
+                value,
+                resolved,
             }),
             local_id,
         }
@@ -86,7 +87,7 @@ pub struct Element {
     pub dependency_count: i64,
     pub dependants: SmallVec<[Dependant; 4]>,
     pub resolved: bool,
-    pub authored: Option<ElementAuthored>,
+    pub authored: Option<ElementSource>,
     pub remote_id: Option<RemoteInModuleElementId>,
     pub diagnoistics: Vec<Diagnostic>,
 }
@@ -109,13 +110,25 @@ impl Element {
 }
 
 #[derive(Debug)]
-pub struct ElementAuthored {
+pub struct ElementSource {
     pub value_source: moss::Value<'static>,
     pub key_source: Option<moss::Name<'static>>,
+}
+
+#[derive(Debug)]
+pub enum ElementAuthored {
+    Source { source: ElementSource, file: FileId },
+    Value { value: TypedValue },
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Dependant {
     pub element_id: ElementId,
     pub source: UntypedNode<'static>,
+}
+
+#[derive(Debug)]
+pub struct ElementDescriptor {
+    pub key: ElementKey,
+    pub value: TypedValue,
 }

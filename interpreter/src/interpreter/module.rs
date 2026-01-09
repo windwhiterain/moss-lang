@@ -1,9 +1,6 @@
 use crate::interpreter::{element::RemoteInModuleElementId, scope::RemoteInModuleScopeId};
 use slotmap::new_key_type;
-use std::{
-    cell::{OnceCell, UnsafeCell},
-    sync::OnceLock,
-};
+use std::{cell::UnsafeCell, sync::OnceLock};
 
 use crate::interpreter::{
     element::{Element, ElementId, ElementRemote, InModuleElementId},
@@ -23,13 +20,13 @@ pub struct Module {
     pub elements: KeyVec<InModuleElementId, Element>,
     pub authored: Option<ScopeAuthored>,
     pub dependants: Vec<ElementId>,
-    pub root_scope: OnceCell<InModuleScopeId>,
+    pub root_scope: Option<InModuleScopeId>,
     pub unresolved_count: usize,
 }
 
 impl Module {
     pub fn has_runed(&self) -> bool {
-        self.root_scope.get().is_some()
+        self.root_scope.is_some()
     }
     pub fn is_resolved(&self) -> bool {
         self.unresolved_count == 0
@@ -38,7 +35,7 @@ impl Module {
 
 pub struct ConcurrentModule {
     /// # Safety
-    /// 
+    ///
     /// only access in one thread
     pub local: UnsafeCell<Module>,
     pub remote: ModuleRemote,
@@ -47,15 +44,15 @@ pub struct ConcurrentModule {
 unsafe impl Sync for ConcurrentModule {}
 
 impl ConcurrentModule {
-    pub fn new(source: ScopeAuthored) -> Self {
+    pub fn new(authored: Option<ScopeAuthored>, resolved: bool) -> Self {
         Self {
             local: UnsafeCell::new(Module {
                 scopes: Default::default(),
                 elements: Default::default(),
-                authored: Some(source),
+                authored,
                 dependants: Default::default(),
                 root_scope: Default::default(),
-                unresolved_count: 1,
+                unresolved_count: if resolved { 0 } else { 1 },
             }),
             remote: ModuleRemote {
                 scopes: Default::default(),
