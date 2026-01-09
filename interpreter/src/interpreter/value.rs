@@ -10,7 +10,7 @@ use crate::{
     utils::{concurrent_string_interner::StringId, moss},
 };
 
-#[derive(Clone, Copy,Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Value {
     Int(i64),
     IntTy,
@@ -114,7 +114,7 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
     }
 }
 
-#[derive(Clone, Copy,Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Builtin {
     If,
     Add,
@@ -130,7 +130,7 @@ impl fmt::Display for Builtin {
     }
 }
 
-#[derive(Clone, Copy,Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct TypedValue {
     pub value: Value,
     pub r#type: Value,

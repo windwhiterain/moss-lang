@@ -1,2 +1,2 @@
-a = mod "a";
 _ = a.a;
+a = mod "a";

@@ -97,3 +97,18 @@ impl<K: From<usize> + Into<usize>, V> SimrVec<K, V> {
         self.0.iter_mut()
     }
 }
+
+#[test]
+fn test() {
+    unsafe {
+        let mut vec = Vec::<usize,usize>::default();
+        println!("{:?}", vec.len());
+        println!("{:?}", vec.insert(1));
+        println!("{:?}", vec.len());
+        println!("{:?}", vec.insert(2));
+        println!("{:?}", vec.len());
+        for i in vec.keys(){
+            println!("-{:?}", i);
+        }
+    }
+}

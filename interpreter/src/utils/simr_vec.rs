@@ -225,6 +225,8 @@ fn test() {
         println!("{:?}", vec.len());
         println!("{:?}", vec.push(2));
         println!("{:?}", vec.len());
-        println!("{:?},{:?}", &*vec.get(0).unwrap(), &*vec.get(1).unwrap());
+        for i in vec.iter(){
+            println!("-{:?}", i);
+        }
     }
 }

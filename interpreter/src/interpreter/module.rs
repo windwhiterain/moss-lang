@@ -10,7 +10,7 @@ use crate::interpreter::{
     scope::{LocalInModuleScopeId, Scope, ScopeAuthored, ScopeRemote},
 };
 
-use crate::utils::type_key::SimrVec as KeySimrVec;
+use crate::utils::type_key::{SimrVec as KeySimrVec, Vec as KeyVec};
 
 pub struct ModuleRemote {
     pub scopes: KeySimrVec<RemoteInModuleScopeId, ScopeRemote>,
@@ -19,8 +19,8 @@ pub struct ModuleRemote {
 }
 
 pub struct ModuleCell {
-    pub scopes: SlotMap<LocalInModuleScopeId, Scope>,
-    pub elements: SlotMap<InModuleElementId, Element>,
+    pub scopes: KeyVec<LocalInModuleScopeId, Scope>,
+    pub elements: KeyVec<InModuleElementId, Element>,
     pub authored: Option<ScopeAuthored>,
     pub dependants: Vec<ElementId>,
     pub root_scope: OnceCell<LocalInModuleScopeId>,

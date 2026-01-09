@@ -401,10 +401,12 @@ pub trait InterpreterLikeMut: InterpreterLike {
     fn get_module_mut(&mut self, id: ModuleId) -> &mut ModuleCell;
 
     fn get_element_mut(&mut self, id: ElementId) -> &mut Element {
-        &mut self.get_module_mut(id.module).elements[id.in_module]
+        self.get_module_mut(id.module)
+            .elements
+            .get_mut(id.in_module)
     }
     fn get_scope_mut(&mut self, id: LocalScopeId) -> &mut Scope {
-        &mut self.get_module_mut(id.module).scopes[id.in_module]
+        self.get_module_mut(id.module).scopes.get_mut(id.in_module)
     }
 
     fn add_element_raw(&mut self, element: Element, module: ModuleId) -> InModuleElementId {
@@ -424,7 +426,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         if let Some(authored) = module.authored {
             let root_scope = self.add_scope(None, Some(authored), module_id);
             module.root_scope.set(root_scope).unwrap();
-            let remote_scope = self.publish_scope(root_scope.global(module_id));
+            let remote_scope = self.get_scope(root_scope.global(module_id)).remote_id.unwrap();
             self.get_module_remote(module_id)
                 .root_scope
                 .set(remote_scope)
@@ -692,17 +694,28 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 .global(scope_id.module)
         };
         let id = match key {
-            ElementKey::Name(name) => scope
+            ElementKey::Name(name) => match scope
                 .elements
-                .entry(name)
-                .or_insert_with(|| new_id(self).in_module)
-                .global(scope_id.module),
+                .entry(name){
+                    std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                        if let Some(key_source) = authored.key_node{
+                            self.diagnose(Location::Scope(scope_id), Diagnostic::ElementKeyRedundancy { source: key_source.upcast() });
+                        } 
+                        return Err(())
+                    },
+                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                        let id = new_id(self);
+                        vacant_entry.insert(id.in_module);
+                        id
+                    },
+                }
             ElementKey::Temp => new_id(self),
         };
-        let element = erase_mut(self.get_element_mut(id));
-        element.raw_value = self
+        let raw_value = self
             .parse_value(Ok(authored.value_node), id, file)
             .unwrap_or(Value::Err);
+        let element = self.get_element_mut(id);
+        element.raw_value = raw_value;
         element.authored = Some(authored);
         Ok(id)
     }
@@ -714,7 +727,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         for (key, element_id) in &erase(scope).elements {
             let element = self.get_element_mut(element_id.global(id.module));
             let remote = ElementRemote::new(*element_id);
-            let remote_id = unsafe{module.elements.insert(remote)};
+            let remote_id = unsafe { module.elements.insert(remote) };
             element.remote_id = Some(remote_id);
             remote_elements.insert(*key, remote_id);
         }
@@ -727,7 +740,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             parent,
             local_id: id.in_module,
         };
-        let remote_id = unsafe{module.scopes.insert(remote)};
+        let remote_id = unsafe { module.scopes.insert(remote) };
         scope.remote_id = Some(remote_id);
         remote_id
     }
@@ -765,6 +778,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             );
 
             for assign in assigns {
+                log::error!("assign: {assign:?}");
                 let Some(assign) = self.grammar_error(Location::Scope(scope_id), assign) else {
                     continue;
                 };
@@ -782,19 +796,12 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     value_node: erase_struct!(value),
                     key_node: Some(erase_struct!(key)),
                 };
-                if let Err(()) = self.parse_element(
+                let _ = self.parse_element(
                     ElementKey::Name(name),
                     scope_id,
                     element_authored,
                     authored.file,
-                ) {
-                    self.diagnose(
-                        Location::Scope(scope_id),
-                        Diagnostic::ElementKeyRedundancy {
-                            source: key.upcast(),
-                        },
-                    );
-                }
+                );
             }
         }
         self.publish_scope(scope_id);
@@ -1024,10 +1031,10 @@ pub trait InterpreterLike {
         include_super: bool,
     ) -> Option<ConcurrentElementId>;
     fn get_element(&self, id: ElementId) -> &Element {
-        &self.get_module(id.module).elements[id.in_module]
+        self.get_module(id.module).elements.get(id.in_module)
     }
     fn get_scope(&self, id: LocalScopeId) -> &Scope {
-        &self.get_module(id.module).scopes[id.in_module]
+        self.get_module(id.module).scopes.get(id.in_module)
     }
     fn get_element_remote(&self, id: RemoteElementId) -> impl Deref<Target = ElementRemote> {
         self.get_module_remote(id.module).elements.get(id.in_module)

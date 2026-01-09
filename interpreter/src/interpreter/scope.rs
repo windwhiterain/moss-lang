@@ -19,21 +19,24 @@ new_type!(
     pub RemoteInModuleScopeId = usize
 );
 
-#[derive(Clone, Copy,Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ScopeSource {
     Scope(moss::Scope<'static>),
     File(moss::SourceFile<'static>),
 }
 
-#[derive(Clone, Copy,Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ScopeAuthored {
     pub source: ScopeSource,
     pub file: FileId,
 }
 
-new_key_type! {pub struct LocalInModuleScopeId;}
+new_type!(
+    #[derive(Clone, Copy,PartialEq,Debug)]
+    pub LocalInModuleScopeId = usize
+);
 
-#[derive(Clone, Copy,Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct LocalScopeId {
     pub in_module: LocalInModuleScopeId,
     pub module: ModuleId,
@@ -45,7 +48,7 @@ pub struct RemoteScopeId {
     pub module: ModuleId,
 }
 
-#[derive(Clone, Copy,Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ScopeId {
     pub local: LocalScopeId,
     pub remote: Option<RemoteInModuleScopeId>,
@@ -87,7 +90,6 @@ pub struct ScopeRemote {
     pub parent: Option<RemoteInModuleScopeId>,
     pub local_id: LocalInModuleScopeId,
 }
-
 
 #[derive(Debug)]
 pub struct Scope {

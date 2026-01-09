@@ -4,13 +4,16 @@ use smallvec::SmallVec;
 use type_sitter::UntypedNode;
 
 use crate::{
-    in_module_id, interpreter::{
+    in_module_id,
+    interpreter::{
         InModuleId,
         diagnose::Diagnostic,
         module::ModuleId,
         scope::LocalInModuleScopeId,
         value::{TypedValue, Value},
-    }, new_type, utils::{concurrent_string_interner::StringId, moss}
+    },
+    new_type,
+    utils::{concurrent_string_interner::StringId, moss},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -19,17 +22,20 @@ pub enum ElementKey {
     Temp,
 }
 
-new_key_type! {pub struct InModuleElementId;}
+new_type! {
+    #[derive(Clone,Copy,PartialEq,Debug)]
+    pub InModuleElementId = usize
+}
 
-#[derive(Clone, Copy, PartialEq,Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct ElementId {
     pub in_module: InModuleElementId,
     pub module: ModuleId,
 }
 
-in_module_id!{InModuleElementId,ElementId}
+in_module_id! {InModuleElementId,ElementId}
 
-new_type!{
+new_type! {
     #[derive(Clone,Copy,PartialEq,Debug)]
     pub RemoteInModuleElementId = usize
 }
@@ -40,7 +46,7 @@ pub struct RemoteElementId {
     pub module: ModuleId,
 }
 
-in_module_id!(RemoteInModuleElementId,RemoteElementId);
+in_module_id!(RemoteInModuleElementId, RemoteElementId);
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ConcurrentElementId {
@@ -48,7 +54,7 @@ pub enum ConcurrentElementId {
     Remote(RemoteElementId),
 }
 
-#[derive(Clone, Copy,Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ElementRemoteCell {
     pub value: TypedValue,
     pub resolved: bool,
@@ -109,7 +115,7 @@ impl Element {
     }
 }
 
-#[derive(Clone, Copy,Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Dependant {
     pub element_id: ElementId,
     pub node: UntypedNode<'static>,

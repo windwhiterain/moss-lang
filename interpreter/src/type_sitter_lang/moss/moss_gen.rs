@@ -1126,6 +1126,46 @@ pub mod symbols {
             self.0
         }
     }
+    #[doc = "Typed node `.`\n\nThis node has no named children\n"]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[repr(transparent)]
+    #[allow(non_camel_case_types)]
+    pub struct Dot<'tree>(::type_sitter::raw::Node<'tree>);
+    #[automatically_derived]
+    #[allow(unused)]
+    impl<'tree> Dot<'tree> {}
+    #[automatically_derived]
+    impl<'tree> ::type_sitter::Node<'tree> for Dot<'tree> {
+        type WithLifetime<'a> = Dot<'a>;
+        const KIND: &'static str = ".";
+        #[inline]
+        fn try_from_raw(
+            node: ::type_sitter::raw::Node<'tree>,
+        ) -> ::type_sitter::NodeResult<'tree, Self> {
+            if node.kind() == "." {
+                Ok(Self(node))
+            } else {
+                Err(::type_sitter::IncorrectKind::new::<Self>(node))
+            }
+        }
+        #[inline]
+        unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
+            debug_assert_eq!(node.kind(), ".");
+            Self(node)
+        }
+        #[inline]
+        fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
+            &self.0
+        }
+        #[inline]
+        fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
+            &mut self.0
+        }
+        #[inline]
+        fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
+            self.0
+        }
+    }
     #[doc = "Typed node `:`\n\nThis node has no named children\n"]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     #[repr(transparent)]

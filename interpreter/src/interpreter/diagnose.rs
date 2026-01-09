@@ -2,7 +2,7 @@ use type_sitter::UntypedNode;
 
 use crate::interpreter::Value;
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub enum Diagnostic {
     GrammarError {
         source: UntypedNode<'static>,
@@ -24,10 +24,10 @@ pub enum Diagnostic {
         source: UntypedNode<'static>,
         value: Value,
     },
-    PathError{
+    PathError {
         source: UntypedNode<'static>,
     },
-    StringEscapeError{
-        source:UntypedNode<'static>,
-    }
+    StringEscapeError {
+        source: UntypedNode<'static>,
+    },
 }

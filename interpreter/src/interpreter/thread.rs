@@ -3,7 +3,9 @@ use std::{cell::UnsafeCell, collections::HashMap, path::PathBuf, sync::Arc};
 use slotmap::new_key_type;
 
 use crate::{
-    interpreter::{Depend, element::ElementId, file::FileId, module::ModuleId}, new_type, utils::{async_lockfree_stack::Stack, moss}
+    interpreter::{Depend, element::ElementId, file::FileId, module::ModuleId},
+    new_type,
+    utils::{async_lockfree_stack::Stack, moss},
 };
 
 pub struct Thread {
