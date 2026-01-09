@@ -28,7 +28,7 @@ pub struct Module {
 }
 
 impl Module {
-    pub fn has_parsed(&self) -> bool {
+    pub fn has_runed(&self) -> bool {
         self.root_scope.get().is_some()
     }
     pub fn is_resolved(&self) -> bool {

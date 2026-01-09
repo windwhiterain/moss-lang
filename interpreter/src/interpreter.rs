@@ -17,13 +17,13 @@ use crate::interpreter::module::ConcurrentModule;
 use crate::interpreter::module::Module;
 use crate::interpreter::module::ModuleId;
 use crate::interpreter::module::ModuleRemote;
+use crate::interpreter::scope::ConcurrentScopeId;
 use crate::interpreter::scope::InModuleScopeId;
-use crate::interpreter::scope::ScopeId;
 use crate::interpreter::scope::RemoteInModuleScopeId;
 use crate::interpreter::scope::RemoteScopeId;
 use crate::interpreter::scope::Scope;
 use crate::interpreter::scope::ScopeAuthored;
-use crate::interpreter::scope::ConcurrentScopeId;
+use crate::interpreter::scope::ScopeId;
 use crate::interpreter::scope::ScopeRemote;
 use crate::interpreter::scope::ScopeSource;
 use crate::interpreter::thread::Depend;
@@ -159,25 +159,19 @@ impl Interpreter {
             }
         }
     }
-    pub fn add_module_raw(&mut self, source: ScopeAuthored) -> ModuleId {
-        let id = self.modules.insert(ConcurrentModule::new(source));
-        match source.source {
-            ScopeSource::Scope(scope) => {}
-            ScopeSource::File(source_file) => self.get_file_mut(source.file).is_module = Some(id),
-        };
-        id
-    }
     pub fn add_module(&mut self, path: PathBuf) -> ModuleId {
         let file_id = self.find_or_add_file(Cow::Owned(path));
         let file = erase_mut(self).get_file(file_id);
-        let source = ScopeSource::File(file.tree.root_node().unwrap());
-        let module = erase_mut(self).add_module_raw(ScopeAuthored {
-            source,
+        let authored = ScopeAuthored {
+            source: ScopeSource::File(file.tree.root_node().unwrap()),
             file: file_id,
-        });
-        self.unresolved_modules.push(module);
+        };
+
+        let id = self.modules.insert(ConcurrentModule::new(authored));
+        self.get_file_mut(authored.file).is_module = Some(id);
+        self.unresolved_modules.push(id);
         self.increase_workload();
-        module
+        id
     }
     pub async fn run(&mut self) {
         log::error!("run(");
@@ -206,7 +200,10 @@ impl Interpreter {
                 loop {
                     let id = modules.next().unwrap();
                     module_ids.push(id);
-                    let thread_id = self.concurrent.threads.insert(Thread::new(Default::default()));
+                    let thread_id = self
+                        .concurrent
+                        .threads
+                        .insert(Thread::new(Default::default()));
                     self.concurrent.module2thread.insert(id, Some(thread_id));
                     module_per_thread -= 1;
                     module_num -= 1;
@@ -237,21 +234,13 @@ impl Interpreter {
                 .unresolved_modules
                 .retain(|key| self.get_module(key).is_resolved());
             for thread_id in erase(self).concurrent.threads.keys() {
-                let thread = erase_mut(self).get_thread_mut(thread_id);
+                let thread = erase_mut(self).get_thread_local_mut(thread_id);
                 for (path, dependants) in mem::take(&mut thread.add_module_delay.files) {
                     let module_id = self.add_module(path);
                     let module = self.get_module_mut(module_id);
                     for dependant in dependants.iter().copied() {
                         module.dependants.push(dependant);
                     }
-                }
-                for scope in mem::take(&mut thread.add_module_delay.scopes) {
-                    let module_id = self.add_module_raw(ScopeAuthored {
-                        source: ScopeSource::Scope(scope.scope),
-                        file: scope.file,
-                    });
-                    let module = self.get_module_mut(module_id);
-                    module.dependants.push(scope.element);
                 }
             }
             log::error!("run loop)");
@@ -302,7 +291,7 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
         }
     }
     async fn run(&mut self) {
-        let modules = &mut erase_mut(self).get_thread_mut(self.thread).modules;
+        let modules = &mut erase_mut(self).get_thread_local_mut(self.thread).modules;
         log::error!(
             "run thread(: {:?}, modules_num: {}",
             self.thread,
@@ -311,8 +300,8 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
         let mut unresolved_num = modules.len();
         for module_id in modules.iter().copied() {
             let module = erase_mut(self.get_module_mut(module_id));
-            if !module.has_parsed() {
-                self.parse_module(module_id);
+            if !module.has_runed() {
+                self.run_module(module_id);
             }
             if module.is_resolved() {
                 unresolved_num -= 1;
@@ -386,97 +375,140 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let str = erase(self.get_node_str(node, file));
         self.str2id(str)
     }
-    fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadLocal;
-    fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal>;
+    /// # Panic
+    /// when concurrent, thread is not local.
+    fn get_thread_local_mut(&mut self, id: ThreadId) -> &mut ThreadLocal;
+    /// # Returns
+    /// - `None` if module is not in threads.
+    /// # Panic
+    /// when concurrent, module is not in local thread.
+    fn get_thread_local_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal>;
+    /// # Panic
+    /// when concurrent, module is not in local thread.
     fn get_module_mut(&mut self, id: ModuleId) -> &mut Module;
-
+    /// # Panic
+    /// when concurrent, element is not in local thread.
     fn get_element_mut(&mut self, id: ElementId) -> &mut Element {
         self.get_module_mut(id.module)
             .elements
             .get_mut(id.in_module)
     }
+    /// # Panic
+    /// when concurrent, scope is not in local thread.
     fn get_scope_mut(&mut self, id: ScopeId) -> &mut Scope {
         self.get_module_mut(id.module).scopes.get_mut(id.in_module)
     }
-
+    /// # Panic
+    /// when concurrent, element is not in local thread.
     fn add_element_raw(&mut self, element: Element, module: ModuleId) -> InModuleElementId {
         let module = self.get_module_mut(module);
         module.unresolved_count += 1;
         module.elements.insert(element)
     }
+    /// # Panic
+    /// - when concurrent, scope is not in local thread.
+    fn add_element(&mut self, key: ElementKey, scope_id: ScopeId, value: TypedValue) -> ElementId {
+        let scope = erase_mut(self.get_scope_mut(scope_id));
+        let id = self
+            .add_element_raw(Element::new(key, scope_id.in_module), scope_id.module)
+            .global(scope_id.module);
+        let element = erase_mut(self.get_element_mut(id));
+        element.resolved_value = value;
+        element.resolved = true;
+        match key {
+            ElementKey::Name(name) => {
+                scope.elements.insert(name, id.in_module);
+            }
+            _ => (),
+        };
+        id
+    }
+    /// # Panic
+    /// when concurrent, element is not in local thread.
     fn add_scope_raw(&mut self, scope: Scope, module: ModuleId) -> InModuleScopeId {
         self.get_module_mut(module).scopes.insert(scope)
     }
-    fn parse_module(&mut self, module_id: ModuleId) {
-        log::error!("run module(: {:?}", module_id);
-        let module = erase_mut(self).get_module_mut(module_id);
-        if module.has_parsed() {
-            return;
+    /// # Panic
+    /// - when concurrent, module is not in local thread.
+    fn add_scope(
+        &mut self,
+        parent: Option<InModuleScopeId>,
+        authored: Option<ScopeAuthored>,
+        module: ModuleId,
+    ) -> InModuleScopeId {
+        let scope_id = self
+            .add_scope_raw(Scope::new(parent, authored, module), module)
+            .global(module);
+        if let Some(parent) = parent {
+            let parent = self.get_scope_mut(parent.global(module));
+            parent.children.push(scope_id.in_module);
         }
-        if let Some(authored) = module.authored {
-            let root_scope = self.add_scope(None, Some(authored), module_id);
-            module.root_scope.set(root_scope).unwrap();
-            let remote_scope = self.get_scope(root_scope.global(module_id)).remote_id.unwrap();
-            self.get_module_remote(module_id)
-                .root_scope
-                .set(remote_scope)
-                .unwrap();
-            for element in module.elements.keys() {
-                self.run_element(element.global(module_id));
-            }
-            module.unresolved_count -= 1;
-            for dependant in mem::take(&mut module.dependants) {
-                self.resolve_element(dependant);
-            }
-            self.decrease_workload();
-        }
-        log::error!("run module): {:?}", module_id);
-    }
-    fn depend_module_raw(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId>;
-    fn depend_module(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId> {
-        if let Some(file) = self.find_file(&path) {
-            let file = self.get_file(file);
-            if let Some(module) = file.is_module {
-                return Some(module);
-            }
-        }
-        self.depend_module_raw(path, element_id)
-    }
+        if let Some(authored) = authored {
+            let mut cursor = erase_struct!(self.get_file(authored.file).tree.walk());
 
-    fn depend_element(
-        &mut self,
-        dependant_id: ElementId,
-        dependency_id: ConcurrentElementId,
-        node: UntypedNode<'static>,
-        local: bool,
-    );
-    fn depend_element_value(
-        &mut self,
-        dependant_id: ElementId,
-        dependency_id: ConcurrentElementId,
-        node: UntypedNode<'static>,
-    ) -> Option<TypedValue> {
-        let value = self.get_element_value(dependency_id);
-        if value.is_none() {
-            self.depend_element(dependant_id, dependency_id, node, true);
-        }
-        value
-    }
-    fn depend_child_element_value(
-        &mut self,
-        dependant_id: ElementId,
-        dependency_id: ElementId,
-    ) -> Option<TypedValue> {
-        let dependency = self.get_element(dependency_id);
-        let node = dependency.authored.as_ref().unwrap().value_node.upcast();
-        self.depend_element_value(
-            dependant_id,
-            ConcurrentElementId::Local(dependency_id),
-            node,
-        )
-    }
-    fn resolve_element(&mut self, id: ElementId);
+            let assigns = if let ScopeSource::Scope(scope) = authored.source {
+                Some(scope.assigns(erase_mut(&mut cursor)))
+            } else {
+                None
+            }
+            .into_iter()
+            .flatten()
+            .chain(
+                if let ScopeSource::File(source_file) = authored.source {
+                    Some(source_file.assigns(&mut cursor))
+                } else {
+                    None
+                }
+                .into_iter()
+                .flatten(),
+            );
 
+            for assign in assigns {
+                log::error!("assign: {assign:?}");
+                let Some(assign) = self.grammar_error(Location::Scope(scope_id), assign) else {
+                    continue;
+                };
+
+                let Some(key) = self.grammar_error(Location::Scope(scope_id), assign.key()) else {
+                    continue;
+                };
+                let Some(value) = self.grammar_error(Location::Scope(scope_id), assign.value())
+                else {
+                    continue;
+                };
+
+                let name = self.get_node_str_id(&key, authored.file);
+                let element_authored = ElementAuthored {
+                    value_node: erase_struct!(value),
+                    key_node: Some(erase_struct!(key)),
+                };
+                let _ = self.parse_element(
+                    ElementKey::Name(name),
+                    scope_id,
+                    element_authored,
+                    authored.file,
+                );
+            }
+        }
+        self.publish_scope(scope_id);
+        scope_id.in_module
+    }
+    /// # Panic
+    /// - when concurrent, location is not in local thread.
+    fn diagnose(&mut self, location: Location, diagnoistic: Diagnostic) {
+        match location {
+            Location::Element(local_element_id) => {
+                let element = self.get_element_mut(local_element_id);
+                element.diagnoistics.push(diagnoistic);
+            }
+            Location::Scope(local_scope_id) => {
+                let scope = self.get_scope_mut(local_scope_id);
+                scope.diagnoistics.push(diagnoistic);
+            }
+        }
+    }
+    /// # Panic
+    /// - when concurrent, location is not in local thread.
     fn grammar_error<T>(
         &mut self,
         location: Location,
@@ -495,18 +527,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
             }
         }
     }
-    fn diagnose(&mut self, location: Location, diagnoistic: Diagnostic) {
-        match location {
-            Location::Element(local_element_id) => {
-                let element = self.get_element_mut(local_element_id);
-                element.diagnoistics.push(diagnoistic);
-            }
-            Location::Scope(local_scope_id) => {
-                let scope = self.get_scope_mut(local_scope_id);
-                scope.diagnoistics.push(diagnoistic);
-            }
-        }
-    }
+    /// # Panic
+    /// - when concurrent, element is not in local thread.
     fn parse_value(
         &mut self,
         node: NodeResult<'static, moss::Value<'static>>,
@@ -649,27 +671,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
         };
         Some(value)
     }
-    fn add_element(
-        &mut self,
-        key: ElementKey,
-        scope_id: ScopeId,
-        value: TypedValue,
-    ) -> ElementId {
-        let scope = erase_mut(self.get_scope_mut(scope_id));
-        let id = self
-            .add_element_raw(Element::new(key, scope_id.in_module), scope_id.module)
-            .global(scope_id.module);
-        let element = erase_mut(self.get_element_mut(id));
-        element.resolved_value = value;
-        element.resolved = true;
-        match key {
-            ElementKey::Name(name) => {
-                scope.elements.insert(name, id.in_module);
-            }
-            _ => (),
-        };
-        id
-    }
+    /// # Panic
+    /// - when concurrent, element is not in local thread.
     fn parse_element(
         &mut self,
         key: ElementKey,
@@ -684,21 +687,24 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 .global(scope_id.module)
         };
         let id = match key {
-            ElementKey::Name(name) => match scope
-                .elements
-                .entry(name){
-                    std::collections::hash_map::Entry::Occupied(occupied_entry) => {
-                        if let Some(key_source) = authored.key_node{
-                            self.diagnose(Location::Scope(scope_id), Diagnostic::RedundantElementKey { source: key_source.upcast() });
-                        } 
-                        return Err(())
-                    },
-                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                        let id = new_id(self);
-                        vacant_entry.insert(id.in_module);
-                        id
-                    },
+            ElementKey::Name(name) => match scope.elements.entry(name) {
+                std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                    if let Some(key_source) = authored.key_node {
+                        self.diagnose(
+                            Location::Scope(scope_id),
+                            Diagnostic::RedundantElementKey {
+                                source: key_source.upcast(),
+                            },
+                        );
+                    }
+                    return Err(());
                 }
+                std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                    let id = new_id(self);
+                    vacant_entry.insert(id.in_module);
+                    id
+                }
+            },
             ElementKey::Temp => new_id(self),
         };
         let raw_value = self
@@ -709,6 +715,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
         element.authored = Some(authored);
         Ok(id)
     }
+    /// # Panic
+    /// - when concurrent, scope is not in local thread.
     fn publish_scope(&mut self, id: ScopeId) -> RemoteInModuleScopeId {
         let scope = erase_mut(self).get_scope_mut(id);
         assert!(self.is_module_local(id.module));
@@ -734,69 +742,63 @@ pub trait InterpreterLikeMut: InterpreterLike {
         scope.remote_id = Some(remote_id);
         remote_id
     }
-    fn add_scope(
-        &mut self,
-        parent: Option<InModuleScopeId>,
-        authored: Option<ScopeAuthored>,
-        module: ModuleId,
-    ) -> InModuleScopeId {
-        let scope_id = self
-            .add_scope_raw(Scope::new(parent, authored, module), module)
-            .global(module);
-        if let Some(parent) = parent {
-            let parent = self.get_scope_mut(parent.global(module));
-            parent.children.push(scope_id.in_module);
-        }
-        if let Some(authored) = authored {
-            let mut cursor = erase_struct!(self.get_file(authored.file).tree.walk());
-
-            let assigns = if let ScopeSource::Scope(scope) = authored.source {
-                Some(scope.assigns(erase_mut(&mut cursor)))
-            } else {
-                None
-            }
-            .into_iter()
-            .flatten()
-            .chain(
-                if let ScopeSource::File(source_file) = authored.source {
-                    Some(source_file.assigns(&mut cursor))
-                } else {
-                    None
-                }
-                .into_iter()
-                .flatten(),
-            );
-
-            for assign in assigns {
-                log::error!("assign: {assign:?}");
-                let Some(assign) = self.grammar_error(Location::Scope(scope_id), assign) else {
-                    continue;
-                };
-
-                let Some(key) = self.grammar_error(Location::Scope(scope_id), assign.key()) else {
-                    continue;
-                };
-                let Some(value) = self.grammar_error(Location::Scope(scope_id), assign.value())
-                else {
-                    continue;
-                };
-
-                let name = self.get_node_str_id(&key, authored.file);
-                let element_authored = ElementAuthored {
-                    value_node: erase_struct!(value),
-                    key_node: Some(erase_struct!(key)),
-                };
-                let _ = self.parse_element(
-                    ElementKey::Name(name),
-                    scope_id,
-                    element_authored,
-                    authored.file,
-                );
+    /// # Panic
+    /// when concurrent, element is not in local thread.
+    fn depend_module_raw(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId>;
+    /// # Panic
+    /// when concurrent, element is not in local thread.
+    fn depend_module(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId> {
+        if let Some(file) = self.find_file(&path) {
+            let file = self.get_file(file);
+            if let Some(module) = file.is_module {
+                return Some(module);
             }
         }
-        self.publish_scope(scope_id);
-        scope_id.in_module
+        self.depend_module_raw(path, element_id)
     }
+    /// # Panic
+    /// - when concurrent, dependant is not in local thread.
+    /// - when not concurrent, dependency id is remote.
+    fn depend_element(
+        &mut self,
+        dependant_id: ElementId,
+        dependency_id: ConcurrentElementId,
+        node: UntypedNode<'static>,
+        local: bool,
+    );
+    /// # Panic
+    /// - when concurrent, dependant is not in local thread.
+    /// - when not concurrent, dependency use remote id.
+    fn depend_element_value(
+        &mut self,
+        dependant_id: ElementId,
+        dependency_id: ConcurrentElementId,
+        node: UntypedNode<'static>,
+    ) -> Option<TypedValue> {
+        let value = self.get_element_value(dependency_id);
+        if value.is_none() {
+            self.depend_element(dependant_id, dependency_id, node, true);
+        }
+        value
+    }
+    /// # Panic
+    /// - when concurrent, any element is not in local thread.
+    fn depend_child_element_value(
+        &mut self,
+        dependant_id: ElementId,
+        dependency_id: ElementId,
+    ) -> Option<TypedValue> {
+        let dependency = self.get_element(dependency_id);
+        let node = dependency.authored.as_ref().unwrap().value_node.upcast();
+        self.depend_element_value(
+            dependant_id,
+            ConcurrentElementId::Local(dependency_id),
+            node,
+        )
+    }
+    fn resolve_element(&mut self, id: ElementId);
+    /// # Panic
+    /// - when concurrent, element is not in local thread.
     fn run_value(&mut self, value: Value, element_id: ElementId) -> Option<TypedValue> {
         let value = match value {
             Value::Int(x) => TypedValue {
@@ -922,7 +924,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                 }
                                 let module_id = self.depend_module(path, element_id)?;
                                 if self.is_module_local(module_id) {
-                                    self.parse_module(module_id);
+                                    self.run_module(module_id);
                                 }
                                 let module = self.get_module_remote(module_id);
                                 let scope_id = *module.root_scope.get()?;
@@ -958,7 +960,11 @@ pub trait InterpreterLikeMut: InterpreterLike {
 
         Some(value)
     }
+    /// # Panic
+    /// - when concurrent, element is not in local thread.
     fn set_element_value(&mut self, element_id: ElementId, value: TypedValue, resolved: bool);
+    /// # Panic
+    /// - when concurrent, element is not in local thread.
     fn run_element(&mut self, element_id: ElementId) {
         let element = erase_mut(self.get_element_mut(element_id));
 
@@ -1002,17 +1008,74 @@ pub trait InterpreterLikeMut: InterpreterLike {
             });
         }
     }
+    /// # Panic
+    /// when concurrent, module is not in local thread.
+    fn run_module(&mut self, module_id: ModuleId) {
+        log::error!("run module(: {:?}", module_id);
+        let module = erase_mut(self).get_module_mut(module_id);
+        if module.has_runed() {
+            return;
+        }
+        if let Some(authored) = module.authored {
+            let root_scope = self.add_scope(None, Some(authored), module_id);
+            module.root_scope.set(root_scope).unwrap();
+            let remote_scope = self
+                .get_scope(root_scope.global(module_id))
+                .remote_id
+                .unwrap();
+            self.get_module_remote(module_id)
+                .root_scope
+                .set(remote_scope)
+                .unwrap();
+            for element in module.elements.keys() {
+                self.run_element(element.global(module_id));
+            }
+            module.unresolved_count -= 1;
+            for dependant in mem::take(&mut module.dependants) {
+                self.resolve_element(dependant);
+            }
+            self.decrease_workload();
+        }
+        log::error!("run module): {:?}", module_id);
+    }
 }
 
 pub trait InterpreterLike {
     fn is_module_local(&self, module: ModuleId) -> bool;
     fn get_worksapce_path(&self) -> &Path;
     fn get_source_path(&self) -> &Path;
+    fn get_file(&self, id: FileId) -> &File;
+    fn find_file(&self, path: impl AsRef<Path>) -> Option<FileId>;
     fn id2str(&self, id: StringId) -> impl Deref<Target = str>;
+    fn get_node_str<'tree>(&self, node: &impl Node<'tree>, file: FileId) -> &str {
+        let file = self.get_file(file);
+        let start = node.start_byte();
+        let end = node.end_byte();
+        &file.text[start..end]
+    }
     fn get_thread_remote(&self, id: ThreadId) -> &ThreadRemote;
+    /// # Returns
+    /// - `None` if when concurrent, module is not in threads.
+    fn get_thread_remote_of(&self, module: ModuleId) -> Option<&ThreadRemote>;
+    /// # Panic
+    /// when concurrent, module is in remote thread.
     fn get_module(&self, id: ModuleId) -> &Module;
     fn get_module_remote(&self, id: ModuleId) -> &ModuleRemote;
-    fn get_thread_remote_of(&self, module: ModuleId) -> Option<&ThreadRemote>;
+    /// # Returns
+    /// - `None` if element is not resolved.
+    /// # Panic
+    /// when not concurrent, element id is remote
+
+    /// # Panic
+    /// when concurrent, element is in remote thread.
+    fn get_element(&self, id: ElementId) -> &Element {
+        self.get_module(id.module).elements.get(id.in_module)
+    }
+    fn get_element_remote(&self, id: RemoteElementId) -> impl Deref<Target = ElementRemote> {
+        self.get_module_remote(id.module)
+            .elements
+            .get_concurrent(id.in_module)
+    }
     fn get_element_value(&self, id: ConcurrentElementId) -> Option<TypedValue>;
     fn find_element(
         &self,
@@ -1020,27 +1083,8 @@ pub trait InterpreterLike {
         key: StringId,
         include_super: bool,
     ) -> Option<ConcurrentElementId>;
-    fn get_element(&self, id: ElementId) -> &Element {
-        self.get_module(id.module).elements.get(id.in_module)
-    }
-    fn get_scope(&self, id: ScopeId) -> &Scope {
-        self.get_module(id.module).scopes.get(id.in_module)
-    }
-    fn get_element_remote(&self, id: RemoteElementId) -> impl Deref<Target = ElementRemote> {
-        self.get_module_remote(id.module).elements.get_concurrent(id.in_module)
-    }
-    fn get_scope_remote(&self, id: RemoteScopeId) -> impl Deref<Target = ScopeRemote> {
-        self.get_module_remote(id.module).scopes.get_concurrent(id.in_module)
-    }
-
-    fn get_file(&self, id: FileId) -> &File;
-    fn find_file(&self, path: impl AsRef<Path>) -> Option<FileId>;
-    fn get_node_str<'tree>(&self, node: &impl Node<'tree>, file: FileId) -> &str {
-        let file = self.get_file(file);
-        let start = node.start_byte();
-        let end = node.end_byte();
-        &file.text[start..end]
-    }
+    /// # Panic
+    /// when concurrent, scope is in remote thread.
     fn find_element_local(
         &self,
         scope_id: ScopeId,
@@ -1101,6 +1145,16 @@ pub trait InterpreterLike {
                 module: scope_id.module,
             });
         }
+    }
+    /// # Panic
+    /// when concurrent, scope is in remote thread.
+    fn get_scope(&self, id: ScopeId) -> &Scope {
+        self.get_module(id.module).scopes.get(id.in_module)
+    }
+    fn get_scope_remote(&self, id: RemoteScopeId) -> impl Deref<Target = ScopeRemote> {
+        self.get_module_remote(id.module)
+            .scopes
+            .get_concurrent(id.in_module)
     }
 }
 
@@ -1256,13 +1310,13 @@ impl InterpreterLikeMut for Interpreter {
         self.strings.get_or_intern(str)
     }
 
-    fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadLocal {
+    fn get_thread_local_mut(&mut self, id: ThreadId) -> &mut ThreadLocal {
         self.concurrent.threads.get_mut(id).local.get_mut()
     }
 
-    fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal> {
+    fn get_thread_local_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal> {
         if let Some(id) = self.concurrent.module2thread[module] {
-            Some(self.get_thread_mut(id))
+            Some(self.get_thread_local_mut(id))
         } else {
             None
         }
@@ -1330,7 +1384,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
         self.interpreter.concurrent.strings.get_or_intern(str)
     }
 
-    fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadLocal {
+    fn get_thread_local_mut(&mut self, id: ThreadId) -> &mut ThreadLocal {
         assert!(id == self.thread);
         unsafe {
             self.interpreter
@@ -1342,9 +1396,9 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
         }
     }
 
-    fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal> {
+    fn get_thread_local_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal> {
         if let Some(id) = self.interpreter.concurrent.module2thread[module] {
-            Some(self.get_thread_mut(id))
+            Some(self.get_thread_local_mut(id))
         } else {
             None
         }
@@ -1446,7 +1500,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
     fn depend_module_raw(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId> {
         let element = self.get_element_mut(element_id);
         element.dependency_count += 1;
-        let add_module_delay = &mut self.get_thread_mut(self.thread).add_module_delay;
+        let add_module_delay = &mut self.get_thread_local_mut(self.thread).add_module_delay;
         add_module_delay
             .files
             .entry(path)

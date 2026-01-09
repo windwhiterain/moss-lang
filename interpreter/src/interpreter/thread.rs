@@ -39,7 +39,6 @@ impl Thread {
                 modules: module_ids,
                 add_module_delay: AddModuleDelay {
                     files: Default::default(),
-                    scopes: Default::default(),
                 },
             }),
             remote: ThreadRemote {
@@ -62,7 +61,6 @@ pub enum Signal {
 
 pub struct AddModuleDelay {
     pub files: HashMap<PathBuf, Vec<ElementId>>,
-    pub scopes: Vec<AddModuleDelayScope>,
 }
 
 pub struct AddModuleDelayScope {
