@@ -928,6 +928,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "moss-cli"
+version = "0.1.0"
+
+[[package]]
 name = "moss-interpreter"
 version = "0.1.0"
 dependencies = [
