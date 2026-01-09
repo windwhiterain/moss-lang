@@ -73,6 +73,7 @@ pub mod thread;
 pub mod value;
 
 static SRC_FILE_EXTENSION: &str = "moss";
+static SRC_PATH: &str = "src";
 
 pub trait InModuleId {
     type GlobalId;
@@ -97,52 +98,42 @@ macro_rules! in_module_id {
 
 pub struct Interpreter {
     pub workspace_path: PathBuf,
-    pub source_path: PathBuf,
     pub strings: StringInterner,
     pub files: SlotMap<FileId, File>,
     pub path2file: hashbrown::HashMap<PathBuf, FileId>,
-    pub root_scope: Option<InModuleScopeId>,
     pub modules: SlotMap<ModuleId, ConcurrentModule>,
     pub unresolved_modules: List<ModuleId>,
-    pub remote: InterpreterRemote,
-    pub single_thread: bool,
+    pub concurrent: InterpreterConcurrent,
+    pub is_concurrent: bool,
 }
-
-unsafe impl Sync for Interpreter {}
 
 impl Interpreter {
     pub fn new(workspace_path: PathBuf) -> Self {
         Self {
             workspace_path: workspace_path,
-            source_path: "src".into(),
             strings: StringInterner::new(),
             files: Default::default(),
             path2file: Default::default(),
-            root_scope: None,
             modules: Default::default(),
             unresolved_modules: Default::default(),
-            remote: InterpreterRemote {
+            concurrent: InterpreterConcurrent {
                 module2thread: Default::default(),
                 threads: Default::default(),
                 strings: ConcurentInterner::new(),
                 workload: AtomicUsize::new(0),
                 workload_zero: Notify::new(),
             },
-            single_thread: true,
+            is_concurrent: false,
         }
     }
     pub fn clear(&mut self) {
-        self.root_scope = None;
         for file in self.files.values_mut() {
             file.is_module = None;
         }
         self.modules.clear();
         self.unresolved_modules.clear();
-        self.remote.module2thread.clear();
-        self.remote.threads.clear();
-    }
-    pub fn assert_single_thread(&self) {
-        assert!(self.single_thread)
+        self.concurrent.module2thread.clear();
+        self.concurrent.threads.clear();
     }
     pub fn get_file_mut(&mut self, id: FileId) -> &mut File {
         &mut self.files[id]
@@ -190,11 +181,11 @@ impl Interpreter {
     }
     pub async fn run(&mut self) {
         log::error!("run(");
-        self.assert_single_thread();
+        assert!(!self.is_concurrent);
         loop {
-            self.remote.module2thread.clear();
-            self.remote.threads.clear();
-            self.remote.strings.sync_from(&self.strings);
+            self.concurrent.module2thread.clear();
+            self.concurrent.threads.clear();
+            self.concurrent.strings.sync_from(&self.strings);
             let mut thread_num: usize = available_parallelism().unwrap().into();
             let mut module_num = self.unresolved_modules.len();
             if module_num == 0 {
@@ -215,37 +206,37 @@ impl Interpreter {
                 loop {
                     let id = modules.next().unwrap();
                     module_ids.push(id);
-                    let thread_id = self.remote.threads.insert(Thread::new(Default::default()));
-                    self.remote.module2thread.insert(id, Some(thread_id));
+                    let thread_id = self.concurrent.threads.insert(Thread::new(Default::default()));
+                    self.concurrent.module2thread.insert(id, Some(thread_id));
                     module_per_thread -= 1;
                     module_num -= 1;
                     if module_per_thread == 0 {
-                        let thread = self.remote.threads.get_mut(thread_id);
+                        let thread = self.concurrent.threads.get_mut(thread_id);
                         thread.local.get_mut().modules = module_ids;
                         break;
                     }
                 }
                 thread_num -= 1;
             }
-            self.single_thread = false;
+            self.is_concurrent = true;
             let mut set = JoinSet::new();
-            for thread in self.remote.threads.keys() {
-                let mut thread_interpreter = ThreadInterpreter {
+            for thread in self.concurrent.threads.keys() {
+                let mut thread_interpreter = ThreadedInterpreter {
                     interpreter: erase(self),
                     thread,
-                    workload_zero: Some(erase(self).remote.workload_zero.notified()),
+                    workload_zero: Some(erase(self).concurrent.workload_zero.notified()),
                 };
                 set.spawn(async move { thread_interpreter.run().await });
             }
             log::error!("join_all(");
             set.join_all().await;
             log::error!("join_all)");
-            self.strings.sync_from(&self.remote.strings);
-            self.single_thread = true;
+            self.strings.sync_from(&self.concurrent.strings);
+            self.is_concurrent = false;
             erase_mut(self)
                 .unresolved_modules
                 .retain(|key| self.get_module(key).is_resolved());
-            for thread_id in erase(self).remote.threads.keys() {
+            for thread_id in erase(self).concurrent.threads.keys() {
                 let thread = erase_mut(self).get_thread_mut(thread_id);
                 for (path, dependants) in mem::take(&mut thread.add_module_delay.files) {
                     let module_id = self.add_module(path);
@@ -285,7 +276,7 @@ impl Interpreter {
     }
 }
 
-pub struct InterpreterRemote {
+pub struct InterpreterConcurrent {
     pub module2thread: SecondaryMap<ModuleId, Option<ThreadId>>,
     pub threads: KeyVec<ThreadId, Thread>,
     pub strings: ConcurrentStringInterner,
@@ -293,18 +284,18 @@ pub struct InterpreterRemote {
     pub workload_zero: Notify,
 }
 
-pub struct ThreadInterpreter<'a, IP: Deref<Target = Interpreter>> {
+pub struct ThreadedInterpreter<'a, IP: Deref<Target = Interpreter>> {
     pub interpreter: IP,
     pub thread: ThreadId,
     pub workload_zero: Option<Notified<'a>>,
 }
 
-impl<'a, IP: Deref<Target = Interpreter>> ThreadInterpreter<'a, IP> {
+impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
     fn is_module_local(&self, module: ModuleId) -> bool {
-        Some(self.thread) == self.interpreter.remote.module2thread[module]
+        Some(self.thread) == self.interpreter.concurrent.module2thread[module]
     }
     fn is_module_remote(&self, module: ModuleId) -> bool {
-        if let Some(id) = self.interpreter.remote.module2thread[module] {
+        if let Some(id) = self.interpreter.concurrent.module2thread[module] {
             id != self.thread
         } else {
             false
@@ -1036,10 +1027,10 @@ pub trait InterpreterLike {
         self.get_module(id.module).scopes.get(id.in_module)
     }
     fn get_element_remote(&self, id: RemoteElementId) -> impl Deref<Target = ElementRemote> {
-        self.get_module_remote(id.module).elements.get(id.in_module)
+        self.get_module_remote(id.module).elements.get_concurrent(id.in_module)
     }
     fn get_scope_remote(&self, id: RemoteScopeId) -> impl Deref<Target = ScopeRemote> {
-        self.get_module_remote(id.module).scopes.get(id.in_module)
+        self.get_module_remote(id.module).scopes.get_concurrent(id.in_module)
     }
 
     fn get_file(&self, id: FileId) -> &File;
@@ -1118,10 +1109,10 @@ impl InterpreterLike for Interpreter {
         self.strings.resolve(id)
     }
     fn get_thread_remote(&self, id: ThreadId) -> &ThreadRemote {
-        &self.remote.threads.get(id).remote
+        &self.concurrent.threads.get(id).remote
     }
     fn get_thread_remote_of(&self, module: ModuleId) -> Option<&ThreadRemote> {
-        if let Some(id) = self.remote.module2thread[module] {
+        if let Some(id) = self.concurrent.module2thread[module] {
             Some(self.get_thread_remote(id))
         } else {
             None
@@ -1168,7 +1159,7 @@ impl InterpreterLike for Interpreter {
     }
 
     fn get_source_path(&self) -> &Path {
-        &self.source_path
+        Path::new(SRC_PATH)
     }
 
     fn is_module_local(&self, module: ModuleId) -> bool {
@@ -1180,9 +1171,9 @@ impl InterpreterLike for Interpreter {
     }
 }
 
-impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadInterpreter<'a, IP> {
+impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadedInterpreter<'a, IP> {
     fn id2str(&self, id: StringId) -> impl Deref<Target = str> {
-        self.interpreter.remote.strings.resolve(id)
+        self.interpreter.concurrent.strings.resolve(id)
     }
     fn get_thread_remote(&self, id: ThreadId) -> &ThreadRemote {
         self.interpreter.get_thread_remote(id)
@@ -1266,11 +1257,11 @@ impl InterpreterLikeMut for Interpreter {
     }
 
     fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadLocal {
-        self.remote.threads.get_mut(id).local.get_mut()
+        self.concurrent.threads.get_mut(id).local.get_mut()
     }
 
     fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal> {
-        if let Some(id) = self.remote.module2thread[module] {
+        if let Some(id) = self.concurrent.module2thread[module] {
             Some(self.get_thread_mut(id))
         } else {
             None
@@ -1321,29 +1312,29 @@ impl InterpreterLikeMut for Interpreter {
     }
 
     fn increase_workload(&mut self) {
-        let workload = self.remote.workload.get_mut();
+        let workload = self.concurrent.workload.get_mut();
         *workload += 1;
         log::error!("inc workload: {}", workload);
     }
 
     fn decrease_workload(&mut self) -> usize {
-        let workload = self.remote.workload.get_mut();
+        let workload = self.concurrent.workload.get_mut();
         *workload -= 1;
         log::error!("dec workload: {}", workload);
         *workload
     }
 }
 
-impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpreter<'a, IP> {
+impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpreter<'a, IP> {
     fn str2id(&mut self, str: &str) -> StringId {
-        self.interpreter.remote.strings.get_or_intern(str)
+        self.interpreter.concurrent.strings.get_or_intern(str)
     }
 
     fn get_thread_mut(&mut self, id: ThreadId) -> &mut ThreadLocal {
         assert!(id == self.thread);
         unsafe {
             self.interpreter
-                .remote
+                .concurrent
                 .threads
                 .get(id)
                 .local
@@ -1352,7 +1343,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
     }
 
     fn get_thread_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal> {
-        if let Some(id) = self.interpreter.remote.module2thread[module] {
+        if let Some(id) = self.interpreter.concurrent.module2thread[module] {
             Some(self.get_thread_mut(id))
         } else {
             None
@@ -1423,7 +1414,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
     }
 
     fn resolve_element(&mut self, id: ElementId) {
-        let thread = self.interpreter.remote.module2thread[id.module].unwrap();
+        let thread = self.interpreter.concurrent.module2thread[id.module].unwrap();
 
         if thread == self.thread {
             let dependant = self.get_element_mut(id);
@@ -1467,7 +1458,7 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
     fn increase_workload(&mut self) {
         let ret = self
             .interpreter
-            .remote
+            .concurrent
             .workload
             .fetch_add(1, Ordering::Relaxed)
             + 1;
@@ -1477,12 +1468,12 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadInterpret
     fn decrease_workload(&mut self) -> usize {
         let ret = self
             .interpreter
-            .remote
+            .concurrent
             .workload
             .fetch_sub(1, Ordering::Relaxed)
             - 1;
         if ret == 0 {
-            self.interpreter.remote.workload_zero.notify_waiters();
+            self.interpreter.concurrent.workload_zero.notify_waiters();
         }
         log::error!("dec workload: {}", ret);
         ret

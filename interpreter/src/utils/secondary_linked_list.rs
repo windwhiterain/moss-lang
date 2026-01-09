@@ -1,5 +1,3 @@
-use std::ops::{Index, IndexMut};
-
 use slotmap::{Key, SecondaryMap};
 
 use crate::utils::erase;

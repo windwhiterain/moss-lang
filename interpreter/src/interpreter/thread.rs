@@ -30,6 +30,8 @@ pub struct Thread {
     pub remote: ThreadRemote,
 }
 
+unsafe impl Sync for Thread {}
+
 impl Thread {
     pub fn new(module_ids: Vec<ModuleId>) -> Self {
         Self {

@@ -72,11 +72,14 @@ impl<K, V> Default for SimrVec<K, V> {
 }
 
 impl<K: From<usize> + Into<usize>, V> SimrVec<K, V> {
+    /// # Safety
+    /// 
+    /// can only called by the only writer
     pub unsafe fn insert(&self, value: V) -> K {
-        unsafe { self.0.push(value).into() }
+        unsafe { self.0.push_concurrent(value).into() }
     }
-    pub fn get(&self, key: K) -> impl Deref<Target = V> {
-        self.0.get(key.into()).unwrap()
+    pub fn get_concurrent(&self, key: K) -> impl Deref<Target = V> {
+        self.0.get_concurrent(key.into()).unwrap()
     }
     pub fn get_mut(&mut self, key: K) -> impl DerefMut<Target = V> {
         self.0.get_mut(key.into()).unwrap()

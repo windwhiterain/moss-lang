@@ -44,6 +44,8 @@ pub struct ConcurrentModule {
     pub remote: ModuleRemote,
 }
 
+unsafe impl Sync for ConcurrentModule {}
+
 impl ConcurrentModule {
     pub fn new(source: ScopeAuthored) -> Self {
         Self {
