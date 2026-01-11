@@ -40,7 +40,7 @@ new_type! {
     pub RemoteInModuleElementId = usize
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct RemoteElementId {
     pub in_module: RemoteInModuleElementId,
     pub module: ModuleId,
@@ -48,7 +48,7 @@ pub struct RemoteElementId {
 
 in_module_id!(RemoteInModuleElementId, RemoteElementId);
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ConcurrentElementId {
     Local(ElementId),
     Remote(RemoteElementId),
@@ -67,12 +67,9 @@ pub struct ElementRemote {
 }
 
 impl ElementRemote {
-    pub fn new(local_id: InModuleElementId, value: TypedValue,resolved:bool) -> Self {
+    pub fn new(local_id: InModuleElementId, value: TypedValue, resolved: bool) -> Self {
         Self {
-            cell: AtomicCell::new(ElementRemoteCell {
-                value,
-                resolved,
-            }),
+            cell: AtomicCell::new(ElementRemoteCell { value, resolved }),
             local_id,
         }
     }

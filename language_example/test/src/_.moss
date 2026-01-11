@@ -1,2 +1,3 @@
 _ = a.a;
 a = mod "a";
+k = diagnose {on = 1;source = @a;text = "oh no!";};

@@ -283,6 +283,67 @@ impl<'tree> ::type_sitter::Node<'tree> for Find<'tree> {
         self.0
     }
 }
+#[doc = "Typed node `find_meta`\n\nThis node has these fields:\n\n- `name`: `name` ([`Name`])\n- `value`: `value` ([`Value`])\n"]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+#[allow(non_camel_case_types)]
+pub struct FindMeta<'tree>(::type_sitter::raw::Node<'tree>);
+#[automatically_derived]
+#[allow(unused)]
+impl<'tree> FindMeta<'tree> {
+    #[doc = "Get the field `name`.\n\nThis child has type `name` ([`Name`])"]
+    #[inline]
+    pub fn name(&self) -> ::type_sitter::NodeResult<'tree, Name<'tree>> {
+        ::type_sitter::Node::raw(self)
+            .child_by_field_name("name")
+            .map(<Name<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
+            .expect(
+                "required child not present, there should at least be a MISSING node in its place",
+            )
+    }
+    #[doc = "Get the field `value`.\n\nThis child has type `value` ([`Value`])"]
+    #[inline]
+    pub fn value(&self) -> ::type_sitter::NodeResult<'tree, Value<'tree>> {
+        ::type_sitter::Node::raw(self)
+            .child_by_field_name("value")
+            .map(<Value<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
+            .expect(
+                "required child not present, there should at least be a MISSING node in its place",
+            )
+    }
+}
+#[automatically_derived]
+impl<'tree> ::type_sitter::Node<'tree> for FindMeta<'tree> {
+    type WithLifetime<'a> = FindMeta<'a>;
+    const KIND: &'static str = "find_meta";
+    #[inline]
+    fn try_from_raw(
+        node: ::type_sitter::raw::Node<'tree>,
+    ) -> ::type_sitter::NodeResult<'tree, Self> {
+        if node.kind() == "find_meta" {
+            Ok(Self(node))
+        } else {
+            Err(::type_sitter::IncorrectKind::new::<Self>(node))
+        }
+    }
+    #[inline]
+    unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
+        debug_assert_eq!(node.kind(), "find_meta");
+        Self(node)
+    }
+    #[inline]
+    fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
+        &self.0
+    }
+    #[inline]
+    fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
+        &mut self.0
+    }
+    #[inline]
+    fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
+        self.0
+    }
+}
 #[doc = "Typed node `int`\n\nThis node has no named children\n"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -308,6 +369,57 @@ impl<'tree> ::type_sitter::Node<'tree> for Int<'tree> {
     #[inline]
     unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
         debug_assert_eq!(node.kind(), "int");
+        Self(node)
+    }
+    #[inline]
+    fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
+        &self.0
+    }
+    #[inline]
+    fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
+        &mut self.0
+    }
+    #[inline]
+    fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
+        self.0
+    }
+}
+#[doc = "Typed node `meta`\n\nThis node has these fields:\n\n- `name`: `name` ([`Name`])\n"]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+#[allow(non_camel_case_types)]
+pub struct Meta<'tree>(::type_sitter::raw::Node<'tree>);
+#[automatically_derived]
+#[allow(unused)]
+impl<'tree> Meta<'tree> {
+    #[doc = "Get the field `name`.\n\nThis child has type `name` ([`Name`])"]
+    #[inline]
+    pub fn name(&self) -> ::type_sitter::NodeResult<'tree, Name<'tree>> {
+        ::type_sitter::Node::raw(self)
+            .child_by_field_name("name")
+            .map(<Name<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
+            .expect(
+                "required child not present, there should at least be a MISSING node in its place",
+            )
+    }
+}
+#[automatically_derived]
+impl<'tree> ::type_sitter::Node<'tree> for Meta<'tree> {
+    type WithLifetime<'a> = Meta<'a>;
+    const KIND: &'static str = "meta";
+    #[inline]
+    fn try_from_raw(
+        node: ::type_sitter::raw::Node<'tree>,
+    ) -> ::type_sitter::NodeResult<'tree, Self> {
+        if node.kind() == "meta" {
+            Ok(Self(node))
+        } else {
+            Err(::type_sitter::IncorrectKind::new::<Self>(node))
+        }
+    }
+    #[inline]
+    unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
+        debug_assert_eq!(node.kind(), "meta");
         Self(node)
     }
     #[inline]
@@ -755,7 +867,7 @@ impl<'tree> ::type_sitter::Node<'tree> for StringRaw<'tree> {
         self.0
     }
 }
-#[doc = "Typed node `value`\n\nThis node has a named child of type `{bracket | call | dict | find | int | name | scope | set | string}`:\n\n- [`Bracket`]\n- [`Call`]\n- [`Dict`]\n- [`Find`]\n- [`Int`]\n- [`Name`]\n- [`Scope`]\n- [`Set`]\n- [`String`]\n\n"]
+#[doc = "Typed node `value`\n\nThis node has a named child of type `{bracket | call | dict | find | find_meta | int | meta | name | scope | set | string}`:\n\n- [`Bracket`]\n- [`Call`]\n- [`Dict`]\n- [`Find`]\n- [`FindMeta`]\n- [`Int`]\n- [`Meta`]\n- [`Name`]\n- [`Scope`]\n- [`Set`]\n- [`String`]\n\n"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 #[allow(non_camel_case_types)]
@@ -765,7 +877,7 @@ pub struct Value<'tree>(::type_sitter::raw::Node<'tree>);
 impl<'tree> Value<'tree> {}
 #[automatically_derived]
 impl<'tree> ::type_sitter::HasChild<'tree> for Value<'tree> {
-    type Child = anon_unions::Bracket_Call_Dict_Find_Int_Name_Scope_Set_String<'tree>;
+    type Child = anon_unions::Bracket_Call_Dict_Find_FindMeta_Int_Meta_Name_Scope_Set_String<'tree>;
 }
 #[automatically_derived]
 impl<'tree> ::type_sitter::Node<'tree> for Value<'tree> {
@@ -1002,6 +1114,46 @@ pub mod symbols {
             self.0
         }
     }
+    #[doc = "Typed node `.@`\n\nThis node has no named children\n"]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[repr(transparent)]
+    #[allow(non_camel_case_types)]
+    pub struct DotAt<'tree>(::type_sitter::raw::Node<'tree>);
+    #[automatically_derived]
+    #[allow(unused)]
+    impl<'tree> DotAt<'tree> {}
+    #[automatically_derived]
+    impl<'tree> ::type_sitter::Node<'tree> for DotAt<'tree> {
+        type WithLifetime<'a> = DotAt<'a>;
+        const KIND: &'static str = ".@";
+        #[inline]
+        fn try_from_raw(
+            node: ::type_sitter::raw::Node<'tree>,
+        ) -> ::type_sitter::NodeResult<'tree, Self> {
+            if node.kind() == ".@" {
+                Ok(Self(node))
+            } else {
+                Err(::type_sitter::IncorrectKind::new::<Self>(node))
+            }
+        }
+        #[inline]
+        unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
+            debug_assert_eq!(node.kind(), ".@");
+            Self(node)
+        }
+        #[inline]
+        fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
+            &self.0
+        }
+        #[inline]
+        fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
+            &mut self.0
+        }
+        #[inline]
+        fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
+            self.0
+        }
+    }
     #[doc = "Typed node `:`\n\nThis node has no named children\n"]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     #[repr(transparent)]
@@ -1122,6 +1274,46 @@ pub mod symbols {
             self.0
         }
     }
+    #[doc = "Typed node `@`\n\nThis node has no named children\n"]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[repr(transparent)]
+    #[allow(non_camel_case_types)]
+    pub struct At<'tree>(::type_sitter::raw::Node<'tree>);
+    #[automatically_derived]
+    #[allow(unused)]
+    impl<'tree> At<'tree> {}
+    #[automatically_derived]
+    impl<'tree> ::type_sitter::Node<'tree> for At<'tree> {
+        type WithLifetime<'a> = At<'a>;
+        const KIND: &'static str = "@";
+        #[inline]
+        fn try_from_raw(
+            node: ::type_sitter::raw::Node<'tree>,
+        ) -> ::type_sitter::NodeResult<'tree, Self> {
+            if node.kind() == "@" {
+                Ok(Self(node))
+            } else {
+                Err(::type_sitter::IncorrectKind::new::<Self>(node))
+            }
+        }
+        #[inline]
+        unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
+            debug_assert_eq!(node.kind(), "@");
+            Self(node)
+        }
+        #[inline]
+        fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
+            &self.0
+        }
+        #[inline]
+        fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
+            &mut self.0
+        }
+        #[inline]
+        fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
+            self.0
+        }
+    }
     #[doc = "Typed node `{`\n\nThis node has no named children\n"]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     #[repr(transparent)]
@@ -1206,15 +1398,17 @@ pub mod symbols {
 pub mod anon_unions {
     #[allow(unused_imports)]
     use super::*;
-    #[doc = "One of `{bracket | call | dict | find | int | name | scope | set | string}`:\n- [`Bracket`]\n- [`Call`]\n- [`Dict`]\n- [`Find`]\n- [`Int`]\n- [`Name`]\n- [`Scope`]\n- [`Set`]\n- [`String`]"]
+    #[doc = "One of `{bracket | call | dict | find | find_meta | int | meta | name | scope | set | string}`:\n- [`Bracket`]\n- [`Call`]\n- [`Dict`]\n- [`Find`]\n- [`FindMeta`]\n- [`Int`]\n- [`Meta`]\n- [`Name`]\n- [`Scope`]\n- [`Set`]\n- [`String`]"]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     #[allow(non_camel_case_types)]
-    pub enum Bracket_Call_Dict_Find_Int_Name_Scope_Set_String<'tree> {
+    pub enum Bracket_Call_Dict_Find_FindMeta_Int_Meta_Name_Scope_Set_String<'tree> {
         Bracket(Bracket<'tree>),
         Call(Call<'tree>),
         Dict(Dict<'tree>),
         Find(Find<'tree>),
+        FindMeta(FindMeta<'tree>),
         Int(Int<'tree>),
+        Meta(Meta<'tree>),
         Name(Name<'tree>),
         Scope(Scope<'tree>),
         Set(Set<'tree>),
@@ -1222,7 +1416,7 @@ pub mod anon_unions {
     }
     #[automatically_derived]
     #[allow(unused)]
-    impl<'tree> Bracket_Call_Dict_Find_Int_Name_Scope_Set_String<'tree> {
+    impl<'tree> Bracket_Call_Dict_Find_FindMeta_Int_Meta_Name_Scope_Set_String<'tree> {
         #[doc = "Returns the node if it is of type `bracket` ([`Bracket`]), otherwise returns `None`"]
         #[inline]
         pub fn as_bracket(self) -> ::std::option::Option<Bracket<'tree>> {
@@ -1263,11 +1457,31 @@ pub mod anon_unions {
                 ::std::option::Option::None
             }
         }
+        #[doc = "Returns the node if it is of type `find_meta` ([`FindMeta`]), otherwise returns `None`"]
+        #[inline]
+        pub fn as_find_meta(self) -> ::std::option::Option<FindMeta<'tree>> {
+            #[allow(irrefutable_let_patterns)]
+            if let Self::FindMeta(x) = self {
+                ::std::option::Option::Some(x)
+            } else {
+                ::std::option::Option::None
+            }
+        }
         #[doc = "Returns the node if it is of type `int` ([`Int`]), otherwise returns `None`"]
         #[inline]
         pub fn as_int(self) -> ::std::option::Option<Int<'tree>> {
             #[allow(irrefutable_let_patterns)]
             if let Self::Int(x) = self {
+                ::std::option::Option::Some(x)
+            } else {
+                ::std::option::Option::None
+            }
+        }
+        #[doc = "Returns the node if it is of type `meta` ([`Meta`]), otherwise returns `None`"]
+        #[inline]
+        pub fn as_meta(self) -> ::std::option::Option<Meta<'tree>> {
+            #[allow(irrefutable_let_patterns)]
+            if let Self::Meta(x) = self {
                 ::std::option::Option::Some(x)
             } else {
                 ::std::option::Option::None
@@ -1315,10 +1529,12 @@ pub mod anon_unions {
         }
     }
     #[automatically_derived]
-    impl<'tree> ::type_sitter::Node<'tree> for Bracket_Call_Dict_Find_Int_Name_Scope_Set_String<'tree> {
-        type WithLifetime<'a> = Bracket_Call_Dict_Find_Int_Name_Scope_Set_String<'a>;
+    impl<'tree> ::type_sitter::Node<'tree>
+        for Bracket_Call_Dict_Find_FindMeta_Int_Meta_Name_Scope_Set_String<'tree>
+    {
+        type WithLifetime<'a> = Bracket_Call_Dict_Find_FindMeta_Int_Meta_Name_Scope_Set_String<'a>;
         const KIND: &'static str =
-            "{bracket | call | dict | find | int | name | scope | set | string}";
+            "{bracket | call | dict | find | find_meta | int | meta | name | scope | set | string}";
         #[inline]
         fn try_from_raw(
             node: ::type_sitter::raw::Node<'tree>,
@@ -1344,8 +1560,18 @@ pub mod anon_unions {
                         <Find<'tree> as ::type_sitter::Node<'tree>>::from_raw_unchecked(node),
                     )
                 }),
+                "find_meta" => Ok(unsafe {
+                    Self::FindMeta(
+                        <FindMeta<'tree> as ::type_sitter::Node<'tree>>::from_raw_unchecked(node),
+                    )
+                }),
                 "int" => Ok(unsafe {
                     Self::Int(<Int<'tree> as ::type_sitter::Node<'tree>>::from_raw_unchecked(node))
+                }),
+                "meta" => Ok(unsafe {
+                    Self::Meta(
+                        <Meta<'tree> as ::type_sitter::Node<'tree>>::from_raw_unchecked(node),
+                    )
                 }),
                 "name" => Ok(unsafe {
                     Self::Name(
@@ -1375,7 +1601,9 @@ pub mod anon_unions {
                 Self::Call(x) => ::type_sitter::Node::raw(x),
                 Self::Dict(x) => ::type_sitter::Node::raw(x),
                 Self::Find(x) => ::type_sitter::Node::raw(x),
+                Self::FindMeta(x) => ::type_sitter::Node::raw(x),
                 Self::Int(x) => ::type_sitter::Node::raw(x),
+                Self::Meta(x) => ::type_sitter::Node::raw(x),
                 Self::Name(x) => ::type_sitter::Node::raw(x),
                 Self::Scope(x) => ::type_sitter::Node::raw(x),
                 Self::Set(x) => ::type_sitter::Node::raw(x),
@@ -1389,7 +1617,9 @@ pub mod anon_unions {
                 Self::Call(x) => ::type_sitter::Node::raw_mut(x),
                 Self::Dict(x) => ::type_sitter::Node::raw_mut(x),
                 Self::Find(x) => ::type_sitter::Node::raw_mut(x),
+                Self::FindMeta(x) => ::type_sitter::Node::raw_mut(x),
                 Self::Int(x) => ::type_sitter::Node::raw_mut(x),
+                Self::Meta(x) => ::type_sitter::Node::raw_mut(x),
                 Self::Name(x) => ::type_sitter::Node::raw_mut(x),
                 Self::Scope(x) => ::type_sitter::Node::raw_mut(x),
                 Self::Set(x) => ::type_sitter::Node::raw_mut(x),
@@ -1403,7 +1633,9 @@ pub mod anon_unions {
                 Self::Call(x) => x.into_raw(),
                 Self::Dict(x) => x.into_raw(),
                 Self::Find(x) => x.into_raw(),
+                Self::FindMeta(x) => x.into_raw(),
                 Self::Int(x) => x.into_raw(),
+                Self::Meta(x) => x.into_raw(),
                 Self::Name(x) => x.into_raw(),
                 Self::Scope(x) => x.into_raw(),
                 Self::Set(x) => x.into_raw(),

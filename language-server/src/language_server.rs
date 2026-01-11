@@ -20,8 +20,7 @@ use tower_lsp::{
 
 use moss_interpreter::{
     interpreter::{
-        Interpreter, InterpreterLike, InModuleId, Node, UntypedNode, diagnose::Diagnostic,
-        file::FileId, scope::ScopeId, value::ContextedValue,
+        self, InModuleId, Interpreter, InterpreterLike, Node, UntypedNode, diagnose::Diagnostic, file::FileId, scope::ScopeId, value::ContextedValue
     },
     utils::erase_mut,
 };
@@ -170,6 +169,14 @@ impl LanguageServer {
                                 DiagnosticSeverity::ERROR,
                             ));
                     }
+                    Diagnostic::Custom { source, text } => {
+                        self.lsp_diagnostics
+                            .push(self.language_server.make_diagnostic(
+                                *source,
+                                &*self.interpreter.id2str(*text),
+                                DiagnosticSeverity::ERROR,
+                            ));
+                    },
                 };
             }
             fn traverse(&mut self, scope_id: ScopeId) {

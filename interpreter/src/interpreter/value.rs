@@ -16,16 +16,17 @@ pub enum Value {
     IntTy,
     String(StringId),
     StringTy,
-    Scope(ConcurrentScopeId),
-    ScopeTy,
+    Map(ConcurrentScopeId),
+    MapTy,
     TyTy,
     Builtin(Builtin),
-    Name {
+    Element(ElementId),
+    ElementTy,
+    Ref {
         name: StringId,
-        scope: ScopeId,
         source: moss::Name<'static>,
     },
-    Find {
+    FindRef {
         value: ElementId,
         key: StringId,
         key_source: moss::Name<'static>,
@@ -35,6 +36,16 @@ pub enum Value {
         func: ElementId,
         param: ElementId,
         source: moss::Call<'static>,
+    },
+    Meta {
+        name: StringId,
+        source: moss::Meta<'static>,
+    },
+    FindMeta {
+        value: ElementId,
+        key: StringId,
+        key_source: moss::Name<'static>,
+        source: moss::Find<'static>,
     },
     Err,
 }
@@ -49,7 +60,7 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
         match *self.value {
             Value::Int(x) => write!(f, "{x}"),
             Value::IntTy => write!(f, "Int"),
-            Value::Scope(scope_id) => {
+            Value::Map(scope_id) => {
                 let local_scope_id = scope_id.local;
                 let collection = self.ctx.get_scope(local_scope_id);
                 write!(f, "{{")?;
@@ -67,23 +78,19 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
                 }
                 write!(f, "}}")
             }
-            Value::ScopeTy => write!(f, "Scope"),
+            Value::MapTy => write!(f, "Map"),
             Value::TyTy => write!(f, "Type"),
-            Value::Builtin(builtin) => write!(f, "@{}", builtin),
-            Value::Name { name, .. } => {
-                write!(f, "{}", self.ctx.id2str(name).deref())
+            Value::Builtin(builtin) => write!(f, "~{}", builtin),
+            Value::Ref { name, .. } => {
+                write!(f, "Ref({})", self.ctx.id2str(name).deref())
             }
-            Value::Find {
-                value: element,
-                key,
-                ..
-            } => {
-                let element = self.ctx.get_element(element);
+            Value::FindRef { value, key, .. } => {
+                let value = self.ctx.get_element(value);
                 write!(
                     f,
                     "{}.{}",
                     ContextedValue {
-                        value: &element.resolved_value.value,
+                        value: &value.resolved_value.value,
                         ctx: self.ctx
                     },
                     self.ctx.id2str(key).deref()
@@ -110,6 +117,37 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
                 write!(f, "{}", self.ctx.id2str(string).deref())
             }
             Value::StringTy => write!(f, "String"),
+            Value::Element(element_id) => write!(f, "Element({})", {
+                let element = self.ctx.get_element(element_id);
+                let file = self
+                    .ctx
+                    .get_scope(element.scope.global(element_id.module))
+                    .get_file()
+                    .unwrap();
+                self.ctx.get_source_str(
+                    &element.authored.as_ref().unwrap().key_source.unwrap(),
+                    file,
+                )
+            }),
+            Value::ElementTy => write!(f, "Element"),
+            Value::Meta { name, source } => write!(f, "@{}", &*self.ctx.id2str(name)),
+            Value::FindMeta {
+                value,
+                key,
+                key_source,
+                source,
+            } => {
+                let value = self.ctx.get_element(value);
+                write!(
+                    f,
+                    "{}.@{}",
+                    ContextedValue {
+                        value: &value.resolved_value.value,
+                        ctx: self.ctx
+                    },
+                    self.ctx.id2str(key).deref()
+                )
+            }
         }
     }
 }
@@ -119,6 +157,7 @@ pub enum Builtin {
     If,
     Add,
     Mod,
+    Diagnose,
 }
 impl fmt::Display for Builtin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -126,6 +165,7 @@ impl fmt::Display for Builtin {
             Builtin::If => write!(f, "if"),
             Builtin::Add => write!(f, "add"),
             Builtin::Mod => write!(f, "mod"),
+            Builtin::Diagnose => write!(f, "diagnose"),
         }
     }
 }

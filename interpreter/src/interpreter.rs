@@ -132,13 +132,22 @@ impl Interpreter {
     }
     pub fn init(&mut self) {
         let module = self.add_module(None);
-        let elements = [ElementDescriptor {
-            key: ElementKey::Name(self.str2id("mod")),
-            value: TypedValue {
-                value: Value::Builtin(Builtin::Mod),
-                r#type: Value::Err,
+        let elements = [
+            ElementDescriptor {
+                key: ElementKey::Name(self.str2id("mod")),
+                value: TypedValue {
+                    value: Value::Builtin(Builtin::Mod),
+                    r#type: Value::Err,
+                },
             },
-        }];
+            ElementDescriptor {
+                key: ElementKey::Name(self.str2id("diagnose")),
+                value: TypedValue {
+                    value: Value::Builtin(Builtin::Diagnose),
+                    r#type: Value::Err,
+                },
+            },
+        ];
         let scope = self.add_scope(None, None, module, elements.into_iter());
         self.set_root_scope(scope.global(module));
         self.builtin_module = Some(module);
@@ -308,10 +317,22 @@ pub struct ThreadedInterpreter<'a, IP: Deref<Target = Interpreter>> {
 
 impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
     fn is_module_local(&self, module: ModuleId) -> bool {
-        Some(self.thread) == self.interpreter.concurrent.module2thread.get(module).copied()
+        Some(self.thread)
+            == self
+                .interpreter
+                .concurrent
+                .module2thread
+                .get(module)
+                .copied()
     }
     fn is_module_remote(&self, module: ModuleId) -> bool {
-        if let Some(id) = self.interpreter.concurrent.module2thread.get(module).copied() {
+        if let Some(id) = self
+            .interpreter
+            .concurrent
+            .module2thread
+            .get(module)
+            .copied()
+        {
             id != self.thread
         } else {
             false
@@ -657,7 +678,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     source: call,
                 }
             }
-            moss::ValueChild::Scope(scope) => Value::Scope(ConcurrentScopeId::from_local(
+            moss::ValueChild::Scope(scope) => Value::Map(ConcurrentScopeId::from_local(
                 erase(self),
                 self.add_scope(
                     Some(scope_id.in_module),
@@ -686,7 +707,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                         },
                     )
                     .unwrap();
-                Value::Find {
+                Value::FindRef {
                     value: element,
                     key: self.get_source_str_id(&name, file_id),
                     key_source: name,
@@ -698,9 +719,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
             }
             moss::ValueChild::Name(name) => {
                 let string_id = self.get_source_str_id(&name, file_id);
-                Value::Name {
+                Value::Ref {
                     name: string_id,
-                    scope: scope_id,
                     source: name,
                 }
             }
@@ -743,6 +763,14 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 }
 
                 Value::String(self.str2id(value.as_ref().map(|x| x.as_ref()).unwrap_or("")))
+            }
+            moss::ValueChild::Meta(meta) => {
+                let name = self.grammar_error(Location::Element(element_id), meta.name())?;
+                let string_id = self.get_source_str_id(&name, file_id);
+                Value::Meta {
+                    name: string_id,
+                    source: meta,
+                }
             }
             _ => Value::Err,
         };
@@ -873,23 +901,20 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 value: Value::Builtin(builtin),
                 r#type: Value::TyTy,
             },
-            Value::Scope(scope_id) => TypedValue {
-                value: Value::Scope(scope_id),
-                r#type: Value::ScopeTy,
+            Value::Map(scope_id) => TypedValue {
+                value: Value::Map(scope_id),
+                r#type: Value::MapTy,
             },
-            Value::ScopeTy => TypedValue {
-                value: Value::ScopeTy,
+            Value::MapTy => TypedValue {
+                value: Value::MapTy,
                 r#type: Value::TyTy,
             },
             Value::TyTy => TypedValue {
                 value: Value::TyTy,
                 r#type: Value::TyTy,
             },
-            Value::Name {
-                name,
-                scope,
-                source,
-            } => {
+            Value::Ref { name, source } => {
+                let scope = self.get_element(element_id).scope.global(element_id.module);
                 if let Some(ref_element_id) = self.find_element(
                     ConcurrentScopeId {
                         local: scope,
@@ -909,7 +934,34 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     return None;
                 }
             }
-            Value::Find {
+            Value::Meta { name, source } => {
+                let scope = self.get_element(element_id).scope.global(element_id.module);
+                if let Some(ref_element_id) = self.find_element(
+                    ConcurrentScopeId {
+                        local: scope,
+                        remote: None,
+                    },
+                    name,
+                    true,
+                ) {
+                    let ConcurrentElementId::Local(ref_element_id) = ref_element_id else {
+                        return None;
+                    };
+                    TypedValue {
+                        value: Value::Element(ref_element_id),
+                        r#type: Value::ElementTy,
+                    }
+                } else {
+                    self.diagnose(
+                        Location::Element(element_id),
+                        Diagnostic::FailedFindElement {
+                            source: source.upcast(),
+                        },
+                    );
+                    return None;
+                }
+            }
+            Value::FindRef {
                 value: ref_element_id,
                 key,
                 key_source,
@@ -917,7 +969,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             } => {
                 let value = self.depend_child_element_value(element_id, ref_element_id)?;
                 match value.value {
-                    Value::Scope(scope_id) => {
+                    Value::Map(scope_id) => {
                         log::error!("find element {}", &*self.id2str(key));
                         if let Some(find_element_id) = self.find_element(scope_id, key, false) {
                             self.depend_element_value(
@@ -925,6 +977,47 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                 find_element_id,
                                 key_source.upcast(),
                             )?
+                        } else {
+                            self.diagnose(
+                                Location::Element(element_id),
+                                Diagnostic::FailedFindElement {
+                                    source: key_source.upcast(),
+                                },
+                            );
+                            return None;
+                        }
+                    }
+                    _ => {
+                        self.diagnose(
+                            Location::Element(element_id),
+                            Diagnostic::CanNotFindIn {
+                                source: source.upcast(),
+                                value: value.value,
+                            },
+                        );
+                        return None;
+                    }
+                }
+            }
+            Value::FindMeta {
+                value: ref_element_id,
+                key,
+                key_source,
+                source,
+            } => {
+                let value = self.depend_child_element_value(element_id, ref_element_id)?;
+                match value.value {
+                    Value::Map(scope_id) => {
+                        log::error!("find element {}", &*self.id2str(key));
+                        if let Some(find_element_id) = self.find_element(scope_id, key, false) {
+                            let ConcurrentElementId::Local(find_element_id) = find_element_id
+                            else {
+                                return None;
+                            };
+                            TypedValue {
+                                value: Value::Element(find_element_id),
+                                r#type: Value::ElementTy,
+                            }
                         } else {
                             self.diagnose(
                                 Location::Element(element_id),
@@ -992,14 +1085,73 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                     module: module_id,
                                 });
                                 TypedValue {
-                                    value: Value::Scope(ConcurrentScopeId {
+                                    value: Value::Map(ConcurrentScopeId {
                                         local: scope.local_id.global(module_id),
                                         remote: Some(scope_id),
                                     }),
-                                    r#type: Value::ScopeTy,
+                                    r#type: Value::MapTy,
                                 }
                             }
                             _ => todo!(),
+                        },
+                        Builtin::Diagnose => match param.value {
+                            Value::Map(scope_id) => {
+                                let on_key = self.str2id("on");
+                                let source_key = self.str2id("source");
+                                let text_key = self.str2id("text");
+
+                                let Value::Int(on) = self
+                                    .depend_element_value(
+                                        element_id,
+                                        self.find_element(scope_id, on_key, false)?,
+                                        source.upcast(),
+                                    )?
+                                    .value
+                                else {
+                                    return None;
+                                };
+                                let Value::String(text) = self
+                                    .depend_element_value(
+                                        element_id,
+                                        self.find_element(scope_id, text_key, false)?,
+                                        source.upcast(),
+                                    )?
+                                    .value
+                                else {
+                                    return None;
+                                };
+                                let Value::Element(element) = self
+                                    .depend_element_value(
+                                        element_id,
+                                        self.find_element(scope_id, source_key, false)?,
+                                        source.upcast(),
+                                    )?
+                                    .value
+                                else {
+                                    return None;
+                                };
+                                if on != 0 {
+                                    self.diagnose(
+                                        Location::Element(element_id),
+                                        Diagnostic::Custom {
+                                            source: self
+                                                .get_element(element)
+                                                .authored
+                                                .as_ref()
+                                                .unwrap()
+                                                .key_source
+                                                .unwrap()
+                                                .upcast(),
+                                            text,
+                                        },
+                                    );
+                                }
+                                TypedValue {
+                                    value: Value::Int(1),
+                                    r#type: Value::IntTy,
+                                }
+                            }
+                            _ => return None,
                         },
                     },
                     _ => {
@@ -1472,7 +1624,13 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
     }
 
     fn get_thread_local_mut_of(&mut self, module: ModuleId) -> Option<&mut ThreadLocal> {
-        if let Some(id) = self.interpreter.concurrent.module2thread.get(module).copied() {
+        if let Some(id) = self
+            .interpreter
+            .concurrent
+            .module2thread
+            .get(module)
+            .copied()
+        {
             Some(self.get_thread_local_mut(id))
         } else {
             None
@@ -1543,7 +1701,13 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
     }
 
     fn resolve_element(&mut self, id: ElementId) {
-        let thread = self.interpreter.concurrent.module2thread.get(id.module).copied().unwrap();
+        let thread = self
+            .interpreter
+            .concurrent
+            .module2thread
+            .get(id.module)
+            .copied()
+            .unwrap();
 
         if thread == self.thread {
             let dependant = self.get_element_mut(id);
