@@ -1,4 +1,4 @@
-use crossbeam::atomic::AtomicCell;
+use std::sync::OnceLock;
 use smallvec::SmallVec;
 use type_sitter::UntypedNode;
 
@@ -62,14 +62,18 @@ pub struct ElementRemoteCell {
 
 #[derive(Debug)]
 pub struct ElementRemote {
-    pub cell: AtomicCell<ElementRemoteCell>,
+    pub value: OnceLock<TypedValue>,
     pub local_id: InModuleElementId,
 }
 
 impl ElementRemote {
-    pub fn new(local_id: InModuleElementId, value: TypedValue, resolved: bool) -> Self {
+    pub fn new(local_id: InModuleElementId, value: Option<TypedValue>) -> Self {
         Self {
-            cell: AtomicCell::new(ElementRemoteCell { value, resolved }),
+            value: if let Some(value) = value {
+                OnceLock::from(value)
+            } else {
+                Default::default()
+            },
             local_id,
         }
     }
@@ -78,8 +82,7 @@ impl ElementRemote {
 #[derive(Debug)]
 pub struct Element {
     pub key: ElementKey,
-    pub resolved_value: TypedValue,
-    pub raw_value: Value,
+    pub value: TypedValue,
     pub scope: InModuleScopeId,
     pub dependency_count: i64,
     pub dependants: SmallVec<[Dependant; 4]>,
@@ -93,8 +96,7 @@ impl Element {
     pub fn new<'tree>(key: ElementKey, scope: InModuleScopeId) -> Self {
         Self {
             key,
-            resolved_value: TypedValue::err(),
-            raw_value: Value::Err,
+            value: TypedValue::err(),
             scope,
             dependency_count: 0,
             dependants: Default::default(),

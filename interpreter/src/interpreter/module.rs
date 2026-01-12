@@ -7,7 +7,7 @@ use crate::interpreter::{
     scope::{InModuleScopeId, Scope, ScopeAuthored, ScopeRemote},
 };
 
-use crate::utils::type_key::{SimrVec as KeySimrVec, Vec as KeyVec};
+use crate::utils::type_key::{SpmrVec as KeySimrVec, Vec as KeyVec};
 
 pub struct ModuleRemote {
     pub scopes: KeySimrVec<RemoteInModuleScopeId, ScopeRemote>,

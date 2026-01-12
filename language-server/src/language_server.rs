@@ -200,11 +200,11 @@ impl LanguageServer {
                                         "{}: {}",
                                         ContextedValue {
                                             ctx: self.interpreter,
-                                            value: &element.resolved_value.value
+                                            value: &element.value.value
                                         },
                                         ContextedValue {
                                             ctx: self.interpreter,
-                                            value: &element.resolved_value.r#type
+                                            value: &element.value.r#type
                                         }
                                     ),
                                     DiagnosticSeverity::HINT,

@@ -1,3 +1,4 @@
+//! Single producer, multi readers.
 use arc_swap::ArcSwap;
 
 use std::{

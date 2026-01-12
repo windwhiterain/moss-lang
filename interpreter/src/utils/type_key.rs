@@ -63,15 +63,15 @@ impl<K: From<usize> + Into<usize>, V> Vec<K, V> {
 }
 
 #[derive(Debug)]
-pub struct SimrVec<K, V>(crate::utils::simr_vec::Vec<V>, PhantomData<K>);
+pub struct SpmrVec<K, V>(crate::utils::spmr_vec::Vec<V>, PhantomData<K>);
 
-impl<K, V> Default for SimrVec<K, V> {
+impl<K, V> Default for SpmrVec<K, V> {
     fn default() -> Self {
         Self(Default::default(), Default::default())
     }
 }
 
-impl<K: From<usize> + Into<usize>, V> SimrVec<K, V> {
+impl<K: From<usize> + Into<usize>, V> SpmrVec<K, V> {
     /// # Safety
     /// 
     /// can only called by the only writer

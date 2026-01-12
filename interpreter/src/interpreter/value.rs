@@ -71,7 +71,7 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
                         "{}: {}, ",
                         self.ctx.id2str(*key).deref(),
                         ContextedValue {
-                            value: &element.resolved_value.value,
+                            value: &element.value.value,
                             ctx: self.ctx
                         }
                     )?;
@@ -90,7 +90,7 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
                     f,
                     "{}.{}",
                     ContextedValue {
-                        value: &value.resolved_value.value,
+                        value: &value.value.value,
                         ctx: self.ctx
                     },
                     self.ctx.id2str(key).deref()
@@ -103,11 +103,11 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
                     f,
                     "({} {})",
                     ContextedValue {
-                        value: &func_element.resolved_value.value,
+                        value: &func_element.value.value,
                         ctx: self.ctx
                     },
                     ContextedValue {
-                        value: &param_element.resolved_value.value,
+                        value: &param_element.value.value,
                         ctx: self.ctx
                     }
                 )
@@ -142,7 +142,7 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
                     f,
                     "{}.@{}",
                     ContextedValue {
-                        value: &value.resolved_value.value,
+                        value: &value.value.value,
                         ctx: self.ctx
                     },
                     self.ctx.id2str(key).deref()

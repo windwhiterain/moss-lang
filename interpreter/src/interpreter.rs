@@ -534,7 +534,14 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let mut remote_elements = HashMap::<StringId, RemoteInModuleElementId>::new();
         for (key, element_id) in &erase(scope).elements {
             let element = self.get_element_mut(element_id.global(id.module));
-            let remote = ElementRemote::new(*element_id, element.resolved_value, element.resolved);
+            let remote = ElementRemote::new(
+                *element_id,
+                if element.resolved {
+                    Some(element.value)
+                } else {
+                    None
+                },
+            );
             let remote_id = unsafe { module_remote.elements.insert(remote) };
             element.remote_id = Some(remote_id);
             remote_elements.insert(*key, remote_id);
@@ -616,12 +623,12 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     .parse_value(Ok(source.value_source), id, file)
                     .unwrap_or(Value::Err);
                 let element = self.get_element_mut(id);
-                element.raw_value = raw_value;
+                element.value.value = raw_value;
                 element.authored = Some(source);
             }
             ElementAuthored::Value { value } => {
                 let element = self.get_element_mut(id);
-                element.resolved_value = value;
+                element.value = value;
                 element.resolved = true;
             }
         }
@@ -847,7 +854,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             log::error!("run element(: {:?}", element_id.in_module,);
         }
 
-        if let Some(resolved_value) = self.run_value(element.raw_value, element_id) {
+        if let Some(resolved_value) = self.run_value(element.value.value, element_id) {
             self.set_element_value(element_id, resolved_value, element.dependency_count == 0);
         }
 
@@ -865,16 +872,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
         }
         for dependant in mem::take(&mut element.dependants) {
             self.resolve_element(dependant.element_id);
-        }
-        if let Some(remote_id) = &element.remote_id {
-            let remote = self.get_element_remote(RemoteElementId {
-                in_module: *remote_id,
-                module: element_id.module,
-            });
-            remote.deref().cell.store(ElementRemoteCell {
-                value: element.resolved_value,
-                resolved: true,
-            });
         }
     }
     /// # Panic
@@ -1173,7 +1170,21 @@ pub trait InterpreterLikeMut: InterpreterLike {
     }
     /// # Panic
     /// - when concurrent, element is not in local thread.
-    fn set_element_value(&mut self, element_id: ElementId, value: TypedValue, resolved: bool);
+    /// - element's value has been resolved.
+    fn set_element_value(&mut self, element_id: ElementId, value: TypedValue, resolved: bool) {
+        let element = self.get_element_mut(element_id);
+        element.value = value;
+        element.resolved = resolved;
+        if resolved {
+            if let Some(remote_id) = element.remote_id.as_ref().copied() {
+                let element = self.get_element_remote(RemoteElementId {
+                    in_module: remote_id,
+                    module: element_id.module,
+                });
+                element.value.set(value).unwrap();
+            }
+        }
+    }
     /// # Panic
     /// when concurrent, element is not in local thread.
     fn depend_module_raw(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId>;
@@ -1405,7 +1416,7 @@ impl InterpreterLike for Interpreter {
             ConcurrentElementId::Local(local_element_id) => {
                 let dependency = self.get_element(local_element_id);
                 if dependency.resolved {
-                    Some(dependency.resolved_value)
+                    Some(dependency.value)
                 } else {
                     None
                 }
@@ -1473,19 +1484,14 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadedInterprete
             ConcurrentElementId::Local(local_element_id) => {
                 let dependency = self.get_element(local_element_id);
                 if dependency.resolved {
-                    Some(dependency.resolved_value)
+                    Some(dependency.value)
                 } else {
                     None
                 }
             }
             ConcurrentElementId::Remote(remote_element_id) => {
                 let dependency = self.get_element_remote(remote_element_id);
-                let r#mut = dependency.cell.load();
-                if r#mut.resolved {
-                    Some(r#mut.value)
-                } else {
-                    None
-                }
+                dependency.value.get().copied()
             }
         }
     }
@@ -1580,12 +1586,6 @@ impl InterpreterLikeMut for Interpreter {
         let dependant = self.get_element_mut(id);
         dependant.dependency_count -= 1;
         self.run_element(id)
-    }
-
-    fn set_element_value(&mut self, element_id: ElementId, value: TypedValue, resolved: bool) {
-        let element = self.get_element_mut(element_id);
-        element.resolved_value = value;
-        element.resolved = resolved;
     }
 
     fn depend_module_raw(&mut self, path: PathBuf, element_id: ElementId) -> Option<ModuleId> {
@@ -1717,22 +1717,6 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
             let thread = self.get_thread_remote(thread);
             thread.channel.push(Signal::Resolve(id));
             self.increase_workload();
-        }
-    }
-
-    fn set_element_value(&mut self, element_id: ElementId, value: TypedValue, resolved: bool) {
-        let element = self.get_element_mut(element_id);
-        element.resolved_value = value;
-        element.resolved = resolved;
-        if let Some(remote_id) = element.remote_id.as_ref().copied() {
-            let element = self.get_element_remote(RemoteElementId {
-                in_module: remote_id,
-                module: element_id.module,
-            });
-            element.cell.store(ElementRemoteCell {
-                value,
-                resolved: resolved,
-            });
         }
     }
 
