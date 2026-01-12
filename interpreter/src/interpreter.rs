@@ -1,3 +1,4 @@
+use crate::any_dyn;
 use crate::erase_struct;
 use crate::interpreter::diagnose::Diagnostic;
 use crate::interpreter::element::ConcurrentElementId;
@@ -145,6 +146,13 @@ impl Interpreter {
                 value: TypedValue {
                     value: Value::Builtin(Builtin::Diagnose),
                     r#type: Value::Err,
+                },
+            },
+            ElementDescriptor {
+                key: ElementKey::Name(self.str2id("dyn")),
+                value: TypedValue {
+                    value: Value::Dyn,
+                    r#type: Value::Dyn,
                 },
             },
         ];
@@ -685,7 +693,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     source: call,
                 }
             }
-            moss::ValueChild::Scope(scope) => Value::Map(ConcurrentScopeId::from_local(
+            moss::ValueChild::Scope(scope) => Value::Scope(ConcurrentScopeId::from_local(
                 erase(self),
                 self.add_scope(
                     Some(scope_id.in_module),
@@ -898,12 +906,12 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 value: Value::Builtin(builtin),
                 r#type: Value::TyTy,
             },
-            Value::Map(scope_id) => TypedValue {
-                value: Value::Map(scope_id),
-                r#type: Value::MapTy,
+            Value::Scope(scope_id) => TypedValue {
+                value: Value::Scope(scope_id),
+                r#type: Value::ScopeTy,
             },
-            Value::MapTy => TypedValue {
-                value: Value::MapTy,
+            Value::ScopeTy => TypedValue {
+                value: Value::ScopeTy,
                 r#type: Value::TyTy,
             },
             Value::TyTy => TypedValue {
@@ -966,7 +974,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             } => {
                 let value = self.depend_child_element_value(element_id, ref_element_id)?;
                 match value.value {
-                    Value::Map(scope_id) => {
+                    Value::Scope(scope_id) => {
                         log::error!("find element {}", &*self.id2str(key));
                         if let Some(find_element_id) = self.find_element(scope_id, key, false) {
                             self.depend_element_value(
@@ -1004,7 +1012,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             } => {
                 let value = self.depend_child_element_value(element_id, ref_element_id)?;
                 match value.value {
-                    Value::Map(scope_id) => {
+                    Value::Scope(scope_id) => {
                         log::error!("find element {}", &*self.id2str(key));
                         if let Some(find_element_id) = self.find_element(scope_id, key, false) {
                             let ConcurrentElementId::Local(find_element_id) = find_element_id
@@ -1046,53 +1054,59 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 let param = self.depend_child_element_value(element_id, param_id)?;
                 match func.value {
                     Value::Builtin(builtin) => match builtin {
-                        Builtin::If => todo!(),
-                        Builtin::Add => todo!(),
-                        Builtin::Mod => match param.value {
-                            Value::String(string_id) => {
-                                let str = erase(self).id2str(string_id);
-                                let path = self
-                                    .get_source_path()
-                                    .join(str.deref())
-                                    .with_extension(SRC_FILE_EXTENSION);
-                                let abs_path = self.get_worksapce_path().join(&path);
-                                if !abs_path.exists() {
-                                    let param = self.get_element(param_id);
-                                    self.diagnose(
-                                        Location::Element(element_id),
-                                        Diagnostic::PathError {
-                                            source: param
-                                                .authored
-                                                .as_ref()
-                                                .unwrap()
-                                                .value_source
-                                                .upcast(),
-                                        },
-                                    );
-                                    return None;
-                                }
-                                let module_id = self.depend_module(path, element_id)?;
-                                if self.is_module_local(module_id) {
-                                    self.run_module(module_id);
-                                }
-                                let module = self.get_module_remote(module_id);
-                                let scope_id = *module.root_scope.get()?;
-                                let scope = self.get_scope_remote(RemoteScopeId {
-                                    in_module: scope_id,
-                                    module: module_id,
+                        Builtin::Mod => {
+                            if any_dyn!(param.value) {
+                                return Some(TypedValue {
+                                    value: Value::Dyn,
+                                    r#type: Value::ScopeTy,
                                 });
-                                TypedValue {
-                                    value: Value::Map(ConcurrentScopeId {
-                                        local: scope.local_id.global(module_id),
-                                        remote: Some(scope_id),
-                                    }),
-                                    r#type: Value::MapTy,
-                                }
                             }
-                            _ => todo!(),
-                        },
+                            match param.value {
+                                Value::String(string_id) => {
+                                    let str = erase(self).id2str(string_id);
+                                    let path = self
+                                        .get_source_path()
+                                        .join(str.deref())
+                                        .with_extension(SRC_FILE_EXTENSION);
+                                    let abs_path = self.get_worksapce_path().join(&path);
+                                    if !abs_path.exists() {
+                                        let param = self.get_element(param_id);
+                                        self.diagnose(
+                                            Location::Element(element_id),
+                                            Diagnostic::PathError {
+                                                source: param
+                                                    .authored
+                                                    .as_ref()
+                                                    .unwrap()
+                                                    .value_source
+                                                    .upcast(),
+                                            },
+                                        );
+                                        return None;
+                                    }
+                                    let module_id = self.depend_module(path, element_id)?;
+                                    if self.is_module_local(module_id) {
+                                        self.run_module(module_id);
+                                    }
+                                    let module = self.get_module_remote(module_id);
+                                    let scope_id = *module.root_scope.get()?;
+                                    let scope = self.get_scope_remote(RemoteScopeId {
+                                        in_module: scope_id,
+                                        module: module_id,
+                                    });
+                                    TypedValue {
+                                        value: Value::Scope(ConcurrentScopeId {
+                                            local: scope.local_id.global(module_id),
+                                            remote: Some(scope_id),
+                                        }),
+                                        r#type: Value::ScopeTy,
+                                    }
+                                }
+                                _ => return None,
+                            }
+                        }
                         Builtin::Diagnose => match param.value {
-                            Value::Map(scope_id) => {
+                            Value::Scope(scope_id) => {
                                 let on_key = self.str2id("on");
                                 let source_key = self.str2id("source");
                                 let text_key = self.str2id("text");
@@ -1150,6 +1164,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                             }
                             _ => return None,
                         },
+                        _ => return None,
                     },
                     _ => {
                         self.diagnose(
@@ -1218,11 +1233,20 @@ pub trait InterpreterLikeMut: InterpreterLike {
         dependency_id: ConcurrentElementId,
         source: UntypedNode<'static>,
     ) -> Option<TypedValue> {
-        let value = self.get_element_value(dependency_id);
-        if value.is_none() {
+        let mut typed_value = self.get_element_value(dependency_id);
+        if let Some(typed_value) = &mut typed_value {
+            match typed_value.value {
+                Value::Dyn => {
+                    typed_value.value = Value::DynRef {
+                        element: dependency_id,
+                    }
+                }
+                _ => (),
+            }
+        } else {
             self.depend_element(dependant_id, dependency_id, source, true);
         }
-        value
+        typed_value
     }
     /// # Panic
     /// - when concurrent, any element is not in local thread.

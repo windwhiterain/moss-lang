@@ -1,4 +1,4 @@
-use crate::interpreter::InModuleId;
+use crate::interpreter::{InModuleId, element::ConcurrentElementId};
 use std::{fmt, ops::Deref};
 
 use crate::{
@@ -16,15 +16,19 @@ pub enum Value {
     IntTy,
     String(StringId),
     StringTy,
-    Map(ConcurrentScopeId),
-    MapTy,
+    Scope(ConcurrentScopeId),
+    ScopeTy,
     TyTy,
     Builtin(Builtin),
     Element(ElementId),
     ElementTy,
+    Dyn,
     Ref {
         name: StringId,
         source: moss::Name<'static>,
+    },
+    DynRef {
+        element: ConcurrentElementId,
     },
     FindRef {
         value: ElementId,
@@ -50,6 +54,16 @@ pub enum Value {
     Err,
 }
 
+#[macro_export]
+macro_rules! any_dyn { ( $( $x:expr ),* ) => {
+    false $( ||
+        match $x{
+            $crate::interpreter::Value::Dyn|$crate::interpreter::Value::DynRef{..}=>true,
+            _=>false
+        }
+    )* };
+}
+
 pub struct ContextedValue<'a, T: InterpreterLike + ?Sized> {
     pub value: &'a Value,
     pub ctx: &'a T,
@@ -60,7 +74,7 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
         match *self.value {
             Value::Int(x) => write!(f, "{x}"),
             Value::IntTy => write!(f, "Int"),
-            Value::Map(scope_id) => {
+            Value::Scope(scope_id) => {
                 let local_scope_id = scope_id.local;
                 let collection = self.ctx.get_scope(local_scope_id);
                 write!(f, "{{")?;
@@ -78,7 +92,7 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
                 }
                 write!(f, "}}")
             }
-            Value::MapTy => write!(f, "Map"),
+            Value::ScopeTy => write!(f, "Scope"),
             Value::TyTy => write!(f, "Type"),
             Value::Builtin(builtin) => write!(f, "~{}", builtin),
             Value::Ref { name, .. } => {
@@ -148,6 +162,8 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
                     self.ctx.id2str(key).deref()
                 )
             }
+            Value::Dyn => write!(f, "Dyn"),
+            Value::DynRef { element } => write!(f, "Dyn"),
         }
     }
 }
