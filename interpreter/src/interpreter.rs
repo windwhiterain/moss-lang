@@ -74,6 +74,7 @@ pub mod module;
 pub mod scope;
 pub mod thread;
 pub mod value;
+pub mod function;
 
 static SRC_FILE_EXTENSION: &str = "moss";
 static SRC_PATH: &str = "src";
@@ -1055,9 +1056,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 match func.value {
                     Value::Builtin(builtin) => match builtin {
                         Builtin::Mod => {
-                            if any_dyn!(param.value) {
+                            if any_dyn!(&param.value) {
                                 return Some(TypedValue {
-                                    value: Value::Dyn,
+                                    value,
                                     r#type: Value::ScopeTy,
                                 });
                             }

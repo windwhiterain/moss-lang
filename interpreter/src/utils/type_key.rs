@@ -1,8 +1,18 @@
 use std::{
+    fmt::Debug,
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
+use crate::utils::pool::Pool;
+
+/// # Example
+/// ```
+/// new_type!{
+///     #[derive(Debug)]
+///     pub XxxId = usize
+/// }
+/// ```
 #[macro_export]
 macro_rules! new_type {
     ( $(#[$outer:meta])* $vis:vis $new:ident = $old:ident ) => {
@@ -73,7 +83,7 @@ impl<K, V> Default for SpmrVec<K, V> {
 
 impl<K: From<usize> + Into<usize>, V> SpmrVec<K, V> {
     /// # Safety
-    /// 
+    ///
     /// can only called by the only writer
     pub unsafe fn insert(&self, value: V) -> K {
         unsafe { self.0.push_concurrent(value).into() }
@@ -104,13 +114,13 @@ impl<K: From<usize> + Into<usize>, V> SpmrVec<K, V> {
 #[test]
 fn test() {
     unsafe {
-        let mut vec = Vec::<usize,usize>::default();
+        let mut vec = Vec::<usize, usize>::default();
         println!("{:?}", vec.len());
         println!("{:?}", vec.insert(1));
         println!("{:?}", vec.len());
         println!("{:?}", vec.insert(2));
         println!("{:?}", vec.len());
-        for i in vec.keys(){
+        for i in vec.keys() {
             println!("-{:?}", i);
         }
     }

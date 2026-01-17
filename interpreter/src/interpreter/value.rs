@@ -54,13 +54,23 @@ pub enum Value {
     Err,
 }
 
+impl Value {
+    pub fn is_dyn(&self) -> bool {
+        match self {
+            Self::Dyn
+            | Self::DynRef { .. }
+            | Self::Call { .. }
+            | Self::Meta { .. }
+            | Self::FindMeta { .. } => true,
+            _ => false,
+        }
+    }
+}
+
 #[macro_export]
 macro_rules! any_dyn { ( $( $x:expr ),* ) => {
     false $( ||
-        match $x{
-            $crate::interpreter::Value::Dyn|$crate::interpreter::Value::DynRef{..}=>true,
-            _=>false
-        }
+        $crate::interpreter::Value::is_dyn($x)
     )* };
 }
 
