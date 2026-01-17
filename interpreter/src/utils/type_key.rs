@@ -15,10 +15,10 @@ use crate::utils::pool::Pool;
 /// ```
 #[macro_export]
 macro_rules! new_type {
-    ( $(#[$outer:meta])* $vis:vis $new:ident = $old:ident ) => {
+    ( $(#[$outer:meta])* $vis:vis $new:ident = $old:ty ) => {
         $(#[$outer])*
         #[repr(transparent)]
-        $vis struct $new($old);
+        $vis struct $new(pub $old);
 
         impl core::convert::From<$old> for $new {
             fn from(value: $old) -> Self {

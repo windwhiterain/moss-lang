@@ -1,18 +1,11 @@
-use std::sync::OnceLock;
 use smallvec::SmallVec;
+use std::{cell::UnsafeCell, sync::OnceLock};
 use type_sitter::UntypedNode;
 
 use crate::{
-    in_module_id,
     interpreter::{
-        InModuleId,
-        diagnose::Diagnostic,
-        file::FileId,
-        module::ModuleId,
-        scope::InModuleScopeId,
-        value::{TypedValue, Value},
+        Id, Managed, Owner, diagnose::Diagnostic, file::FileId, scope::Scope, value::{TypedValue, Value}
     },
-    new_type,
     utils::{concurrent_string_interner::StringId, moss},
 };
 
@@ -22,99 +15,70 @@ pub enum ElementKey {
     Temp,
 }
 
-new_type! {
-    #[derive(Clone,Copy,PartialEq,Debug)]
-    pub InModuleElementId = usize
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct ElementId {
-    pub in_module: InModuleElementId,
-    pub module: ModuleId,
-}
-
-in_module_id! {InModuleElementId,ElementId}
-
-new_type! {
-    #[derive(Clone,Copy,PartialEq,Debug)]
-    pub RemoteInModuleElementId = usize
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct RemoteElementId {
-    pub in_module: RemoteInModuleElementId,
-    pub module: ModuleId,
-}
-
-in_module_id!(RemoteInModuleElementId, RemoteElementId);
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum ConcurrentElementId {
-    Local(ElementId),
-    Remote(RemoteElementId),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ElementRemoteCell {
+#[derive(Debug)]
+pub struct ElementLocal {
     pub value: TypedValue,
     pub resolved: bool,
-}
-
-#[derive(Debug)]
-pub struct ElementRemote {
-    pub value: OnceLock<TypedValue>,
-    pub local_id: InModuleElementId,
-}
-
-impl ElementRemote {
-    pub fn new(local_id: InModuleElementId, value: Option<TypedValue>) -> Self {
-        Self {
-            value: if let Some(value) = value {
-                OnceLock::from(value)
-            } else {
-                Default::default()
-            },
-            local_id,
-        }
-    }
+    pub dependency_count: i64,
+    pub dependants: SmallVec<[Dependant; 4]>,
+    pub diagnoistics: Vec<Diagnostic>,
 }
 
 #[derive(Debug)]
 pub struct Element {
     pub key: ElementKey,
-    pub value: TypedValue,
-    pub scope: InModuleScopeId,
-    pub dependency_count: i64,
-    pub dependants: SmallVec<[Dependant; 4]>,
-    pub resolved: bool,
-    pub authored: Option<ElementSource>,
-    pub remote_id: Option<RemoteInModuleElementId>,
-    pub diagnoistics: Vec<Diagnostic>,
+    pub scope: Id<Scope>,
+    pub source: Option<ElementSource>,
+    pub value: OnceLock<TypedValue>,
+    pub local: UnsafeCell<ElementLocal>,
 }
 
+impl Managed for Element{
+    const NAME: &str = "Element";
+    
+    type Local = ElementLocal;
+    
+    fn get_local(&self)->&UnsafeCell<Self::Local> {
+        &self.local
+    }
+    
+    fn get_local_mut(&mut self)->&mut UnsafeCell<Self::Local> {
+        &mut self.local
+    }
+    type Onwer = Scope;
+    
+    fn get_owner(&self)->super::Owner<Self::Onwer> where Self: Sized {
+        Owner::Managed(self.scope)
+    }
+}
+
+
+
 impl Element {
-    pub fn new<'tree>(key: ElementKey, scope: InModuleScopeId) -> Self {
+    pub fn new<'tree>(key: ElementKey, scope: Id<Scope>, source: Option<ElementSource>) -> Self {
         Self {
             key,
-            value: TypedValue::err(),
+            value: Default::default(),
             scope,
-            dependency_count: 0,
-            dependants: Default::default(),
-            authored: None,
-            resolved: false,
-            remote_id: None,
-            diagnoistics: Default::default(),
+            source,
+            local: UnsafeCell::new(ElementLocal {
+                value: TypedValue::err(),
+                dependency_count: 0,
+                dependants: Default::default(),
+                resolved: false,
+                diagnoistics: Default::default(),
+            }),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone,Copy)]
 pub struct ElementSource {
     pub value_source: moss::Value<'static>,
     pub key_source: Option<moss::Name<'static>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone,Copy)]
 pub enum ElementAuthored {
     Source { source: ElementSource, file: FileId },
     Value { value: TypedValue },
@@ -122,7 +86,7 @@ pub enum ElementAuthored {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Dependant {
-    pub element_id: ElementId,
+    pub element_id: Id<Element>,
     pub source: UntypedNode<'static>,
 }
 

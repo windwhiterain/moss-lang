@@ -3,7 +3,7 @@ use std::{cell::UnsafeCell, collections::HashMap, path::PathBuf, sync::Arc};
 use type_sitter::UntypedNode;
 
 use crate::{
-    interpreter::{element::ElementId, file::FileId, module::ModuleId},
+    interpreter::{Id, element::Element, file::FileId, module::ModuleId},
     new_type,
     utils::{async_lockfree_stack::Stack, moss},
 };
@@ -24,7 +24,7 @@ pub struct ThreadRemote {
 
 pub struct Thread {
     /// # Safety
-    /// 
+    ///
     /// only access in one thread
     pub local: UnsafeCell<ThreadLocal>,
     pub remote: ThreadRemote,
@@ -49,22 +49,22 @@ impl Thread {
 }
 
 pub struct Depend {
-    pub dependant: ElementId,
-    pub dependency: ElementId,
+    pub dependant: Id<Element>,
+    pub dependency: Id<Element>,
     pub source: UntypedNode<'static>,
 }
 
 pub enum Signal {
     Depend(Depend),
-    Resolve(ElementId),
+    Resolve(Id<Element>),
 }
 
 pub struct AddModuleDelay {
-    pub files: HashMap<PathBuf, Vec<ElementId>>,
+    pub files: HashMap<PathBuf, Vec<Id<Element>>>,
 }
 
 pub struct AddModuleDelayScope {
     pub file: FileId,
     pub scope: moss::Scope<'static>,
-    pub element: ElementId,
+    pub element: Id<Element>,
 }

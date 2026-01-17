@@ -1,30 +1,30 @@
-use crate::interpreter::{element::RemoteInModuleElementId, scope::RemoteInModuleScopeId};
+use crate::{gen_pools, interpreter::Id, utils::pool::Pool};
 use slotmap::new_key_type;
 use std::{cell::UnsafeCell, sync::OnceLock};
 
 use crate::interpreter::{
-    element::{Element, ElementId, ElementRemote, InModuleElementId},
-    scope::{InModuleScopeId, Scope, ScopeAuthored, ScopeRemote},
+    element::Element,
+    scope::{Scope, ScopeAuthored},
 };
 
-use crate::utils::type_key::{SpmrVec as KeySimrVec, Vec as KeyVec};
-
-pub struct ModuleRemote {
-    pub scopes: KeySimrVec<RemoteInModuleScopeId, ScopeRemote>,
-    pub elements: KeySimrVec<RemoteInModuleElementId, ElementRemote>,
-    pub root_scope: OnceLock<RemoteInModuleScopeId>,
+gen_pools! {
+    pub Pools{scopes:Scope,elements:Element}
 }
 
-pub struct Module {
-    pub scopes: KeyVec<InModuleScopeId, Scope>,
-    pub elements: KeyVec<InModuleElementId, Element>,
+pub struct ModuleLocal {
+    pub pools: Pools,
     pub authored: Option<ScopeAuthored>,
-    pub dependants: Vec<ElementId>,
-    pub root_scope: Option<InModuleScopeId>,
+    pub dependants: Vec<Id<Element>>,
+    pub root_scope: Option<Id<Scope>>,
     pub unresolved_count: usize,
 }
 
-impl Module {
+pub struct Module {
+    pub local: UnsafeCell<ModuleLocal>,
+    pub root_scope: OnceLock<Id<Scope>>,
+}
+
+impl ModuleLocal {
     pub fn has_runed(&self) -> bool {
         self.root_scope.is_some()
     }
@@ -33,32 +33,17 @@ impl Module {
     }
 }
 
-pub struct ConcurrentModule {
-    /// # Safety
-    ///
-    /// only access in one thread
-    pub local: UnsafeCell<Module>,
-    pub remote: ModuleRemote,
-}
-
-unsafe impl Sync for ConcurrentModule {}
-
-impl ConcurrentModule {
+impl Module {
     pub fn new(authored: Option<ScopeAuthored>, resolved: bool) -> Self {
         Self {
-            local: UnsafeCell::new(Module {
-                scopes: Default::default(),
-                elements: Default::default(),
+            local: UnsafeCell::new(ModuleLocal {
+                pools: Default::default(),
                 authored,
                 dependants: Default::default(),
                 root_scope: Default::default(),
                 unresolved_count: if resolved { 0 } else { 1 },
             }),
-            remote: ModuleRemote {
-                scopes: Default::default(),
-                elements: Default::default(),
-                root_scope: Default::default(),
-            },
+            root_scope: Default::default(),
         }
     }
 }

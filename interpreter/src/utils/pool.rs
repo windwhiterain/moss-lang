@@ -1,4 +1,4 @@
-use std::{fmt::Debug, mem::MaybeUninit, sync::atomic::AtomicPtr};
+use std::{fmt::Debug, mem::MaybeUninit};
 
 pub struct Pool<T> {
     chuncks: Vec<Box<[MaybeUninit<T>]>>,
@@ -36,7 +36,7 @@ impl<T> Pool<T> {
             length: 0,
         }
     }
-    pub fn insert(&mut self, value: T) -> *const T {
+    pub fn insert(&mut self, value: T) -> (*mut T, &mut T) {
         if self.chuncks.is_empty() {
             self.chuncks.push(Box::new_uninit_slice(8));
         }
@@ -50,10 +50,11 @@ impl<T> Pool<T> {
         }
         let current_chunck = self.chuncks.get_mut(self.current_chunck_idx).unwrap();
         let raw_item = current_chunck.get_mut(self.next_idx).unwrap();
-        let ret = raw_item.write(value) as *const T;
+        let item = raw_item.write(value);
+        let ptr = item as *mut T;
         self.next_idx += 1;
         self.length += 1;
-        ret
+        (ptr, item)
     }
     pub fn clear(&mut self) {
         for raw_item in self.iter_raw_mut() {
@@ -91,6 +92,44 @@ impl<T> Drop for Pool<T> {
         }
     }
 }
+
+pub trait PoolOf<T> {
+    fn get(&self) -> &Pool<T>;
+    fn get_mut(&mut self) -> &mut Pool<T>;
+}
+
+#[macro_export]
+macro_rules! gen_pools {
+    ($(#[$outer:meta])* $vis:vis $name:ident{$($field:ident : $type:ty),*}) => {
+        $(#[$outer])*
+        #[derive(Default)]
+        $vis struct $name{
+            $($field:$crate::utils::pool::Pool<$type>,)*
+        }
+
+        $(
+            impl $crate::utils::pool::PoolOf<$type> for $name{
+                fn get(&self)->&Pool<$type>{
+                    &self.$field
+                }
+                fn get_mut(&mut self)->&mut Pool<$type>{
+                    &mut self.$field
+                }
+            }
+        )*
+
+        impl $name{
+            pub fn get<T>(&self)->&Pool<T> where Self:$crate::utils::pool::PoolOf<T>{
+                <Self as $crate::utils::pool::PoolOf<T>>::get(self)
+            }
+
+            pub fn get_mut<T>(&mut self)->&mut Pool<T> where Self:$crate::utils::pool::PoolOf<T>{
+                <Self as $crate::utils::pool::PoolOf<T>>::get_mut(self)
+            }
+        }
+    };
+}
+gen_pools! {K{a:usize}}
 
 #[test]
 fn test() {

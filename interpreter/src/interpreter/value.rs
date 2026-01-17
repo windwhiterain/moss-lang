@@ -1,12 +1,8 @@
-use crate::interpreter::{InModuleId, element::ConcurrentElementId};
+use crate::interpreter::{Id, element::Element, scope::Scope};
 use std::{fmt, ops::Deref};
 
 use crate::{
-    interpreter::{
-        InterpreterLike,
-        element::ElementId,
-        scope::{ConcurrentScopeId, ScopeId},
-    },
+    interpreter::InterpreterLike,
     utils::{concurrent_string_interner::StringId, moss},
 };
 
@@ -16,11 +12,11 @@ pub enum Value {
     IntTy,
     String(StringId),
     StringTy,
-    Scope(ConcurrentScopeId),
+    Scope(Id<Scope>),
     ScopeTy,
     TyTy,
     Builtin(Builtin),
-    Element(ElementId),
+    Element(Id<Element>),
     ElementTy,
     Dyn,
     Ref {
@@ -28,17 +24,17 @@ pub enum Value {
         source: moss::Name<'static>,
     },
     DynRef {
-        element: ConcurrentElementId,
+        element: Id<Element>,
     },
     FindRef {
-        value: ElementId,
+        value: Id<Element>,
         key: StringId,
         key_source: moss::Name<'static>,
         source: moss::Find<'static>,
     },
     Call {
-        func: ElementId,
-        param: ElementId,
+        func: Id<Element>,
+        param: Id<Element>,
         source: moss::Call<'static>,
     },
     Meta {
@@ -46,7 +42,7 @@ pub enum Value {
         source: moss::Meta<'static>,
     },
     FindMeta {
-        value: ElementId,
+        value: Id<Element>,
         key: StringId,
         key_source: moss::Name<'static>,
         source: moss::Find<'static>,
@@ -65,6 +61,9 @@ impl Value {
             _ => false,
         }
     }
+    pub fn with_ctx<'a, Ctx:InterpreterLike>(&'a self,ctx:&'a Ctx)->ContextedValue<'a,Ctx>{
+        ContextedValue { value: self, ctx: ctx }
+    }
 }
 
 #[macro_export]
@@ -79,28 +78,13 @@ pub struct ContextedValue<'a, T: InterpreterLike + ?Sized> {
     pub ctx: &'a T,
 }
 
-impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
+impl<'a, T: InterpreterLike> fmt::Display for ContextedValue<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self.value {
             Value::Int(x) => write!(f, "{x}"),
             Value::IntTy => write!(f, "Int"),
             Value::Scope(scope_id) => {
-                let local_scope_id = scope_id.local;
-                let collection = self.ctx.get_scope(local_scope_id);
-                write!(f, "{{")?;
-                for (key, element) in &collection.elements {
-                    let element = self.ctx.get_element(element.global(local_scope_id.module));
-                    write!(
-                        f,
-                        "{}: {}, ",
-                        self.ctx.id2str(*key).deref(),
-                        ContextedValue {
-                            value: &element.value.value,
-                            ctx: self.ctx
-                        }
-                    )?;
-                }
-                write!(f, "}}")
+                write!(f,"{}",scope_id.with_ctx(self.ctx))
             }
             Value::ScopeTy => write!(f, "Scope"),
             Value::TyTy => write!(f, "Type"),
@@ -109,31 +93,19 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
                 write!(f, "Ref({})", self.ctx.id2str(name).deref())
             }
             Value::FindRef { value, key, .. } => {
-                let value = self.ctx.get_element(value);
                 write!(
                     f,
                     "{}.{}",
-                    ContextedValue {
-                        value: &value.value.value,
-                        ctx: self.ctx
-                    },
+                    value.with_ctx(self.ctx),
                     self.ctx.id2str(key).deref()
                 )
             }
             Value::Call { func, param, .. } => {
-                let func_element = self.ctx.get_element(func);
-                let param_element = self.ctx.get_element(param);
                 write!(
                     f,
                     "({} {})",
-                    ContextedValue {
-                        value: &func_element.value.value,
-                        ctx: self.ctx
-                    },
-                    ContextedValue {
-                        value: &param_element.value.value,
-                        ctx: self.ctx
-                    }
+                    func.with_ctx(self.ctx),
+                    param.with_ctx(self.ctx)
                 )
             }
             Value::Err => write!(f, "Err"),
@@ -142,16 +114,10 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
             }
             Value::StringTy => write!(f, "String"),
             Value::Element(element_id) => write!(f, "Element({})", {
-                let element = self.ctx.get_element(element_id);
-                let file = self
-                    .ctx
-                    .get_scope(element.scope.global(element_id.module))
-                    .get_file()
-                    .unwrap();
-                self.ctx.get_source_str(
-                    &element.authored.as_ref().unwrap().key_source.unwrap(),
-                    file,
-                )
+                let element = self.ctx.get(element_id);
+                let file = self.ctx.get(element.scope).get_file().unwrap();
+                self.ctx
+                    .get_source_str(&element.source.as_ref().unwrap().key_source.unwrap(), file)
             }),
             Value::ElementTy => write!(f, "Element"),
             Value::Meta { name, source } => write!(f, "@{}", &*self.ctx.id2str(name)),
@@ -161,14 +127,10 @@ impl<'a, T: InterpreterLike + ?Sized> fmt::Display for ContextedValue<'a, T> {
                 key_source,
                 source,
             } => {
-                let value = self.ctx.get_element(value);
                 write!(
                     f,
                     "{}.@{}",
-                    ContextedValue {
-                        value: &value.value.value,
-                        ctx: self.ctx
-                    },
+                    value.with_ctx(self.ctx),
                     self.ctx.id2str(key).deref()
                 )
             }

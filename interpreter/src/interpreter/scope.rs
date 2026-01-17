@@ -1,98 +1,57 @@
-use std::collections::HashMap;
+use std::{cell::UnsafeCell, collections::HashMap};
 
 use crate::{
-    in_module_id, interpreter::{
-        InModuleId, InterpreterLike,
-        diagnose::Diagnostic,
-        element::{InModuleElementId, RemoteInModuleElementId},
-        file::FileId,
-        module::ModuleId,
-    }, new_type, utils::{concurrent_string_interner::StringId, moss}
+    interpreter::{Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId, module::ModuleId
+    },
+    utils::{concurrent_string_interner::StringId, moss},
 };
 
-new_type!(
-    #[derive(Clone, Copy,PartialEq,Debug)]
-    pub InModuleScopeId = usize
-);
-
-#[derive(Clone, Copy, Debug)]
-pub struct ScopeId {
-    pub in_module: InModuleScopeId,
-    pub module: ModuleId,
-}
-
-in_module_id!(InModuleScopeId,ScopeId);
-
-new_type!(
-    #[derive(Clone, Copy,PartialEq,Debug)]
-    pub RemoteInModuleScopeId = usize
-);
-
-#[derive(Clone, Copy)]
-pub struct RemoteScopeId {
-    pub in_module: RemoteInModuleScopeId,
-    pub module: ModuleId,
-}
-
-in_module_id!(RemoteInModuleScopeId,RemoteScopeId);
-
-#[derive(Clone, Copy, Debug)]
-pub struct ConcurrentScopeId {
-    pub local: ScopeId,
-    pub remote: Option<RemoteInModuleScopeId>,
-}
-
-impl ConcurrentScopeId {
-    pub fn get_remote(&self) -> Option<RemoteScopeId> {
-        Some(RemoteScopeId {
-            in_module: self.remote?,
-            module: self.local.module,
-        })
-    }
-    pub fn from_local(interpreter: &(impl InterpreterLike + ?Sized), local: ScopeId) -> Self {
-        let scope = interpreter.get_scope(local);
-        Self {
-            local,
-            remote: scope.remote_id,
-        }
-    }
-    pub fn get_module(&self) -> ModuleId {
-        self.local.module
-    }
+#[derive(Debug)]
+pub struct ScopeLocal {
+    pub children: Vec<Id<Scope>>,
+    pub diagnoistics: Vec<Diagnostic>,
 }
 
 #[derive(Debug)]
 pub struct Scope {
-    pub elements: HashMap<StringId, InModuleElementId>,
-    pub parent: Option<InModuleScopeId>,
-    pub children: Vec<InModuleScopeId>,
+    pub elements: HashMap<StringId, Id<Element>>,
+    pub parent: Option<Id<Scope>>,
     pub authored: Option<ScopeAuthored>,
-    pub remote_id: Option<RemoteInModuleScopeId>,
-    pub diagnoistics: Vec<Diagnostic>,
     pub module: ModuleId,
+    pub local: UnsafeCell<ScopeLocal>,
 }
 
-#[derive(Debug)]
-pub struct ScopeRemote {
-    pub elements: HashMap<StringId, RemoteInModuleElementId>,
-    pub parent: Option<RemoteInModuleScopeId>,
-    pub local_id: InModuleScopeId,
+impl Managed for Scope{
+    const NAME: &str = "Scope";
+    
+    type Local = ScopeLocal;
+    
+    fn get_local(&self)->&UnsafeCell<Self::Local> {
+        & self.local
+    }
+    
+    fn get_local_mut(&mut self)->&mut UnsafeCell<Self::Local> {
+        &mut self.local
+    }
+    
+    type Onwer = Self;
+    
+    fn get_owner(&self)->super::Owner<Self::Onwer> where Self: Sized {
+        Owner::Module(self.module)
+    }
 }
 
 impl Scope {
-    pub fn new(
-        parent: Option<InModuleScopeId>,
-        authored: Option<ScopeAuthored>,
-        module: ModuleId,
-    ) -> Self {
+    pub fn new(parent: Option<Id<Scope>>, authored: Option<ScopeAuthored>, module: ModuleId) -> Self {
         Self {
             elements: Default::default(),
             parent,
-            children: Default::default(),
             authored,
-            remote_id: None,
-            diagnoistics: Default::default(),
             module,
+            local: UnsafeCell::new(ScopeLocal {
+                children: Default::default(),
+                diagnoistics: Default::default(),
+            }),
         }
     }
     pub fn get_file(&self) -> Option<FileId> {

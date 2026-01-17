@@ -19,8 +19,7 @@ use tower_lsp::{
 };
 
 use moss_interpreter::{
-    interpreter::{
-        self, InModuleId, Interpreter, InterpreterLike, Node, UntypedNode, diagnose::Diagnostic, file::FileId, scope::ScopeId, value::ContextedValue
+    interpreter::{  Id, Interpreter, InterpreterLike, Node, UntypedNode, diagnose::Diagnostic, file::FileId, scope::Scope, value::ContextedValue
     },
     utils::erase_mut,
 };
@@ -179,45 +178,43 @@ impl LanguageServer {
                     },
                 };
             }
-            fn traverse(&mut self, scope_id: ScopeId) {
-                let scope = self.interpreter.get_scope(scope_id);
-                for diagnostic in &scope.diagnoistics {
+            fn traverse(&mut self, scope_id: Id<Scope>) {
+                let scope_local = unsafe { self.interpreter.get_local(scope_id) };
+                let scope = self.interpreter.get(scope_id);
+                for diagnostic in &scope_local.diagnoistics {
                     self.diagnose(diagnostic);
                 }
-                for element_id in scope.elements.values() {
+                for element_id in scope.elements.values().copied() {
+                    let element_local = unsafe { self
+                        .interpreter
+                        .get_local(element_id) };
                     let element = self
                         .interpreter
-                        .get_element(element_id.global(scope_id.module));
-                    for diagnoistic in &element.diagnoistics {
+                        .get(element_id);
+                    for diagnoistic in &element_local.diagnoistics {
                         self.diagnose(diagnoistic);
                     }
-                    if let Some(authored) = &element.authored {
+                    if let Some(authored) = &element.source {
                         if let Some(key_node) = authored.key_source {
                             self.lsp_diagnostics
                                 .push(self.language_server.make_diagnostic(
                                     key_node.upcast(),
                                     format!(
                                         "{}: {}",
-                                        ContextedValue {
-                                            ctx: self.interpreter,
-                                            value: &element.value.value
-                                        },
-                                        ContextedValue {
-                                            ctx: self.interpreter,
-                                            value: &element.value.r#type
-                                        }
+                                        element_local.value.value.with_ctx(self.interpreter),
+                                        element_local.value.r#type.with_ctx(self.interpreter)
                                     ),
                                     DiagnosticSeverity::HINT,
                                 ));
                         }
                     }
                 }
-                for child_id in &scope.children {
-                    let child = self.interpreter.get_scope(child_id.global(scope_id.module));
+                for child_id in scope_local.children.iter().copied() {
+                    let child = self.interpreter.get(child_id);
                     if let Some(file) = child.get_file()
                         && file == self.file_id
                     {
-                        self.traverse(child_id.global(scope_id.module));
+                        self.traverse(child_id);
                     }
                 }
             }
@@ -230,7 +227,7 @@ impl LanguageServer {
         let Some(module_id) = file.is_module else {
             return;
         };
-        let module = interpreter.get_module(module_id);
+        let module = unsafe { interpreter.get_module_local(module_id) };
         let Some(scope_id) = module.root_scope else {
             return;
         };
@@ -242,7 +239,7 @@ impl LanguageServer {
             lsp_diagnostics: &mut lsp_diagnostics,
         };
 
-        context.traverse(scope_id.global(module_id));
+        context.traverse(scope_id);
 
         self.client
             .publish_diagnostics(uri, lsp_diagnostics, None)
