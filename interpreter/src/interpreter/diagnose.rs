@@ -1,6 +1,6 @@
 use type_sitter::UntypedNode;
 
-use crate::{interpreter::Value, utils::concurrent_string_interner::StringId};
+use crate::{interpreter::{StaticValue, value::Value}, utils::concurrent_string_interner::StringId};
 
 #[derive(Clone, Debug)]
 pub enum Diagnostic {

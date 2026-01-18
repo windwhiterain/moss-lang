@@ -1,4 +1,3 @@
-use crate::any_dyn;
 use crate::erase_struct;
 use crate::interpreter::diagnose::Diagnostic;
 use crate::interpreter::element::Dependant;
@@ -24,8 +23,11 @@ use crate::interpreter::thread::ThreadId;
 use crate::interpreter::thread::ThreadLocal;
 use crate::interpreter::thread::ThreadRemote;
 use crate::interpreter::value::Builtin;
-use crate::interpreter::value::TypedValue;
+use crate::interpreter::value::Expr;
+use crate::interpreter::value::StaticValue;
+use crate::interpreter::value::Type;
 use crate::interpreter::value::Value;
+use crate::merge_in;
 use crate::utils::concurrent_string_interner::ConcurentInterner;
 use crate::utils::concurrent_string_interner::StringId;
 use crate::utils::erase;
@@ -72,20 +74,20 @@ pub mod value;
 static SRC_FILE_EXTENSION: &str = "moss";
 static SRC_PATH: &str = "src";
 
-pub struct Id<T>(pub usize,PhantomData<T>);
+pub struct Id<T>(pub usize, PhantomData<T>);
 
-impl<T> Id<T>{
-    pub fn new(ptr:*const T)->Self{
-        Self(ptr as usize,Default::default())
+impl<T> Id<T> {
+    pub fn new(ptr: *const T) -> Self {
+        Self(ptr as usize, Default::default())
     }
 }
 
-impl<T> Id<T>{
-    fn with_ctx<'a,Ctx:InterpreterLike>(self,ctx:&'a Ctx)->ContextedId<'a,T,Ctx> where Self: Sized{
-        ContextedId{
-            id: self,
-            ctx,
-        }
+impl<T> Id<T> {
+    fn with_ctx<'a, Ctx: InterpreterLike>(self, ctx: &'a Ctx) -> ContextedId<'a, T, Ctx>
+    where
+        Self: Sized,
+    {
+        ContextedId { id: self, ctx }
     }
 }
 
@@ -122,7 +124,7 @@ where
 
 impl<T> Clone for Id<T> {
     fn clone(&self) -> Self {
-        Self(self.0.clone(),Default::default())
+        Self(self.0.clone(), Default::default())
     }
 }
 
@@ -145,9 +147,9 @@ impl<'a, Ctx: InterpreterLike> Display for ContextedId<'a, Element, Ctx> {
             f,
             "{}",
             if let Some(value) = self.ctx.get_element_value(self.id) {
-                value.value
+                value
             } else {
-                Value::Err
+                Value::Static(StaticValue::Err)
             }
             .with_ctx(self.ctx)
         )
@@ -198,7 +200,7 @@ pub struct Interpreter {
     pub builtin_module: Option<ModuleId>,
 }
 
-unsafe impl Sync for Interpreter{}
+unsafe impl Sync for Interpreter {}
 
 impl Interpreter {
     pub fn new(workspace_path: PathBuf) -> Self {
@@ -225,24 +227,11 @@ impl Interpreter {
         let elements = [
             ElementDescriptor {
                 key: ElementKey::Name(self.str2id("mod")),
-                value: TypedValue {
-                    value: Value::Builtin(Builtin::Mod),
-                    r#type: Value::Err,
-                },
+                value: Value::Static(StaticValue::Builtin(Builtin::Mod)),
             },
             ElementDescriptor {
                 key: ElementKey::Name(self.str2id("diagnose")),
-                value: TypedValue {
-                    value: Value::Builtin(Builtin::Diagnose),
-                    r#type: Value::Err,
-                },
-            },
-            ElementDescriptor {
-                key: ElementKey::Name(self.str2id("dyn")),
-                value: TypedValue {
-                    value: Value::Dyn,
-                    r#type: Value::Dyn,
-                },
+                value: Value::Static(StaticValue::Builtin(Builtin::Diagnose)),
             },
         ];
         let scope = unsafe { self.add_scope(None, None, module, elements.into_iter()) };
@@ -438,12 +427,14 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                 } else {
                     match thread.channel.async_pop().await {
                         Signal::Depend(depend) => {
-                            unsafe { self.get_local_mut(depend.dependency)
-                                .dependants
-                                .push(Dependant {
-                                    element_id: depend.dependant,
-                                    source: depend.source,
-                                }) };
+                            unsafe {
+                                self.get_local_mut(depend.dependency)
+                                    .dependants
+                                    .push(Dependant {
+                                        element_id: depend.dependant,
+                                        source: depend.source,
+                                    })
+                            };
                         }
                         Signal::Resolve(local_element_id) => {
                             self.resolve_element(local_element_id);
@@ -526,16 +517,12 @@ pub trait InterpreterLike {
         unsafe { self.get::<T>(id).get_local().as_ref_unchecked() }
     }
 
-    fn get_element_value(&self, id: Id<Element>) -> Option<TypedValue> {
+    fn get_element_value(&self, id: Id<Element>) -> Option<Value> {
         if self.is_remote(id) {
             self.get(id).value.get().copied()
         } else {
             let local = unsafe { self.get_local(id) };
-            if local.resolved {
-                Some(local.value)
-            } else {
-                None
-            }
+            local.value
         }
     }
     fn find_element(
@@ -630,11 +617,16 @@ pub trait InterpreterLikeMut: InterpreterLike {
         module: ModuleId,
         elements: impl Iterator<Item = ElementDescriptor>,
     ) -> Id<Scope> {
+        let depth = if let Some(parent) = parent {
+            self.get(parent).depth + 1
+        } else {
+            0
+        };
         let (scope_ptr, scope) = unsafe {
             self.get_module_local_mut(module)
                 .pools
                 .get_mut::<Scope>()
-                .insert(Scope::new(parent, authored, module))
+                .insert(Scope::new(parent, authored, module, depth))
         };
         let scope_id = Id::new(scope_ptr);
         let scope = erase_mut(scope);
@@ -753,18 +745,14 @@ pub trait InterpreterLikeMut: InterpreterLike {
         };
         match authored {
             ElementAuthored::Source { source, file } => {
-                let raw_value = unsafe {
-                    self.parse_value(Ok(source.value_source), id, scope, file)
-                        .unwrap_or(Value::Err)
-                };
+                let expr = unsafe { self.parse_value(Ok(source.value_source), id, scope, file) };
                 let element = unsafe { self.get_local_mut::<Element>(id) };
-                element.value.value = raw_value;
-                unsafe { self.get_module_local_mut(scope.module).unresolved_count+=1 };
+                element.expr = expr;
+                unsafe { self.get_module_local_mut(scope.module).unresolved_count += 1 };
             }
             ElementAuthored::Value { value } => {
                 let element = unsafe { self.get_local_mut::<Element>(id) };
-                element.value = value;
-                element.resolved = true;
+                element.value = Some(value);
             }
         }
         Ok(id)
@@ -778,7 +766,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         element_id: Id<Element>,
         parent: &mut Scope,
         file_id: FileId,
-    ) -> Option<Value> {
+    ) -> Option<Expr> {
         let source = unsafe { self.grammar_error(Location::Element(element_id), source) }?;
         let source_child =
             unsafe { self.grammar_error(Location::Element(element_id), source.child()) }?;
@@ -786,10 +774,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let element = self.get::<Element>(element_id);
         let scope_id = element.scope;
         debug_assert!(scope_id == parent.get_id());
-        let value = match source_child {
+        let expr = match source_child {
             moss::ValueChild::Bracket(bracket) => unsafe {
-                self.parse_value(bracket.value(), element_id, parent, file_id)
-                    .unwrap_or(Value::Err)
+                self.parse_value(bracket.value(), element_id, parent, file_id)?
             },
             moss::ValueChild::Call(call) => {
                 let func =
@@ -822,13 +809,13 @@ pub trait InterpreterLikeMut: InterpreterLike {
                         },
                     )
                     .unwrap();
-                Value::Call {
+                Expr::Call {
                     func: func_element,
                     param: param_element,
                     source: call,
                 }
             }
-            moss::ValueChild::Scope(scope_source) => Value::Scope(unsafe {
+            moss::ValueChild::Scope(scope_source) => Expr::Value(StaticValue::Scope(unsafe {
                 // SAFETY: element -> scope
                 self.add_scope(
                     Some(scope_id),
@@ -839,7 +826,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     parent.module,
                     iter::empty(),
                 )
-            }),
+            })),
             moss::ValueChild::Find(find) => {
                 let value =
                     unsafe { self.grammar_error(Location::Element(element_id), find.value()) }?;
@@ -858,19 +845,19 @@ pub trait InterpreterLikeMut: InterpreterLike {
                         },
                     )
                     .unwrap();
-                Value::FindRef {
+                Expr::FindRef {
                     value: element,
                     key: self.get_source_str_id(&name, file_id),
                     key_source: name,
                     source: find,
                 }
             }
-            moss::ValueChild::Int(int) => {
-                Value::Int(self.get_source_str(&int, file_id).parse().unwrap())
-            }
+            moss::ValueChild::Int(int) => Expr::Value(StaticValue::Int(
+                self.get_source_str(&int, file_id).parse().unwrap(),
+            )),
             moss::ValueChild::Name(name) => {
                 let string_id = self.get_source_str_id(&name, file_id);
-                Value::Ref {
+                Expr::Ref {
                     name: string_id,
                     source: name,
                 }
@@ -917,19 +904,21 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     }
                 }
 
-                Value::String(self.str2id(value.as_ref().map(|x| x.as_ref()).unwrap_or("")))
+                Expr::Value(StaticValue::String(
+                    self.str2id(value.as_ref().map(|x| x.as_ref()).unwrap_or("")),
+                ))
             }
             moss::ValueChild::Meta(meta) => {
                 let name = self.grammar_error(Location::Element(element_id), meta.name())?;
                 let string_id = self.get_source_str_id(&name, file_id);
-                Value::Meta {
+                Expr::Meta {
                     name: string_id,
                     source: meta,
                 }
             }
-            _ => Value::Err,
+            _ => Expr::Value(StaticValue::Err),
         };
-        Some(value)
+        Some(expr)
     }
     /// # Safety
     /// `location` is local
@@ -999,9 +988,13 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let element_local = erase_mut(unsafe { self.get_local_mut(element_id) });
         let element = erase(self.get(element_id));
 
-        if element_local.resolved || element_local.dependency_count > 0 {
+        if element_local.is_resolved() || element_local.dependency_count > 0 {
             return;
         }
+
+        let Some(expr) = element_local.expr else {
+            return;
+        };
 
         if let ElementKey::Name(name) = element.key {
             log::error!("run element(: {}", &*self.id2str(name),);
@@ -1009,19 +1002,14 @@ pub trait InterpreterLikeMut: InterpreterLike {
             log::error!("run element(: {:?}", element_id);
         }
 
-        if let Some(resolved_value) = self.run_value(element_local.value.value, element_id) {
-            self.set_element_value(
-                element_id,
-                resolved_value,
-                element_local.dependency_count == 0,
-            );
-        }
-
+        let resolved_value = self.run_value(expr, element_id);
+        
         if element_local.dependency_count > 0 {
             return;
         }
 
-        element_local.resolved = true;
+        self.set_element_value(element_id, resolved_value.unwrap_or(Value::Static(StaticValue::Err)));
+
         let module = unsafe { self.get_module_local_mut(self.get(element.scope).module) };
         module.unresolved_count -= 1;
         if let ElementKey::Name(name) = element.key {
@@ -1035,42 +1023,11 @@ pub trait InterpreterLikeMut: InterpreterLike {
     }
     /// # Panic
     /// - when concurrent, element is not in local thread.
-    fn run_value(&mut self, value: Value, element_id: Id<Element>) -> Option<TypedValue> {
+    fn run_value(&mut self, expr: Expr, element_id: Id<Element>) -> Option<Value> {
         let scope = self.get(element_id).scope;
-        let value = match value {
-            Value::Int(x) => TypedValue {
-                value: Value::Int(x),
-                r#type: Value::IntTy,
-            },
-            Value::IntTy => TypedValue {
-                value: Value::IntTy,
-                r#type: Value::TyTy,
-            },
-            Value::String(id) => TypedValue {
-                value: Value::String(id),
-                r#type: Value::StringTy,
-            },
-            Value::StringTy => TypedValue {
-                value: Value::StringTy,
-                r#type: Value::TyTy,
-            },
-            Value::Builtin(builtin) => TypedValue {
-                value: Value::Builtin(builtin),
-                r#type: Value::TyTy,
-            },
-            Value::Scope(scope_id) => TypedValue {
-                value: Value::Scope(scope_id),
-                r#type: Value::ScopeTy,
-            },
-            Value::ScopeTy => TypedValue {
-                value: Value::ScopeTy,
-                r#type: Value::TyTy,
-            },
-            Value::TyTy => TypedValue {
-                value: Value::TyTy,
-                r#type: Value::TyTy,
-            },
-            Value::Ref { name, source } => {
+        let expr = match expr {
+            Expr::Value(value) => Value::Static(value),
+            Expr::Ref { name, source } => {
                 if let Some(ref_element_id) = self.find_element(scope, name, true) {
                     self.depend_element_value(element_id, ref_element_id, source.upcast())?
                 } else {
@@ -1085,12 +1042,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     return None;
                 }
             }
-            Value::Meta { name, source } => {
+            Expr::Meta { name, source } => {
                 if let Some(ref_element_id) = self.find_element(scope, name, true) {
-                    TypedValue {
-                        value: Value::Element(ref_element_id),
-                        r#type: Value::ElementTy,
-                    }
+                    Value::Static(StaticValue::Element(ref_element_id))
                 } else {
                     unsafe {
                         self.diagnose(
@@ -1103,185 +1057,159 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     return None;
                 }
             }
-            Value::FindRef {
+            Expr::FindRef {
                 value: ref_element_id,
                 key,
                 key_source,
                 source,
             } => {
                 let value = self.depend_child_element_value(element_id, ref_element_id)?;
-                match value.value {
-                    Value::Scope(scope_id) => {
-                        log::error!("find element {}", &*self.id2str(key));
-                        if let Some(find_element_id) = self.find_element(scope_id, key, false) {
-                            self.depend_element_value(
-                                element_id,
-                                find_element_id,
-                                key_source.upcast(),
-                            )?
-                        } else {
-                            unsafe {
-                                self.diagnose(
-                                    Location::Element(element_id),
-                                    Diagnostic::FailedFindElement {
-                                        source: key_source.upcast(),
-                                    },
-                                )
-                            };
-                            return None;
-                        }
-                    }
-                    _ => {
-                        unsafe {
-                            self.diagnose(
-                                Location::Element(element_id),
-                                Diagnostic::CanNotFindIn {
-                                    source: source.upcast(),
-                                    value: value.value,
-                                },
-                            )
-                        };
-                        return None;
-                    }
-                }
-            }
-            Value::FindMeta {
-                value: ref_element_id,
-                key,
-                key_source,
-                source,
-            } => {
-                let value = self.depend_child_element_value(element_id, ref_element_id)?;
-                match value.value {
-                    Value::Scope(scope_id) => {
-                        log::error!("find element {}", &*self.id2str(key));
-                        if let Some(find_element_id) = self.find_element(scope_id, key, false) {
-                            TypedValue {
-                                value: Value::Element(find_element_id),
-                                r#type: Value::ElementTy,
+                match value {
+                    Value::Static(value) => match value {
+                        StaticValue::Scope(scope_id) => {
+                            log::error!("find element {}", &*self.id2str(key));
+                            if let Some(find_element_id) = self.find_element(scope_id, key, false) {
+                                self.depend_element_value(
+                                    element_id,
+                                    find_element_id,
+                                    key_source.upcast(),
+                                )?
+                            } else {
+                                unsafe {
+                                    self.diagnose(
+                                        Location::Element(element_id),
+                                        Diagnostic::FailedFindElement {
+                                            source: key_source.upcast(),
+                                        },
+                                    )
+                                };
+                                return None;
                             }
-                        } else {
-                            unsafe {
-                                self.diagnose(
-                                    Location::Element(element_id),
-                                    Diagnostic::FailedFindElement {
-                                        source: key_source.upcast(),
-                                    },
-                                )
-                            };
-                            return None;
                         }
-                    }
-                    _ => {
-                        unsafe {
-                            self.diagnose(
-                                Location::Element(element_id),
-                                Diagnostic::CanNotFindIn {
-                                    source: source.upcast(),
-                                    value: value.value,
-                                },
-                            )
-                        };
-                        return None;
-                    }
+                        _ => return None,
+                    },
+                    _ => return None,
                 }
             }
-            Value::Call {
+            Expr::FindMeta {
+                value: ref_element_id,
+                key,
+                key_source,
+                source,
+            } => {
+                let value = self.depend_child_element_value(element_id, ref_element_id)?;
+                match value {
+                    Value::Static(value) => match value {
+                        StaticValue::Scope(scope_id) => {
+                            log::error!("find element {}", &*self.id2str(key));
+                            if let Some(find_element_id) = self.find_element(scope_id, key, false) {
+                                Value::Static(StaticValue::Element(find_element_id))
+                            } else {
+                                unsafe {
+                                    self.diagnose(
+                                        Location::Element(element_id),
+                                        Diagnostic::FailedFindElement {
+                                            source: key_source.upcast(),
+                                        },
+                                    )
+                                };
+                                return None;
+                            }
+                        }
+                        _ => return None,
+                    },
+                    _ => return None,
+                }
+            }
+            Expr::Call {
                 func,
                 param: param_id,
                 source,
             } => {
                 let func = self.depend_child_element_value(element_id, func)?;
                 let param = self.depend_child_element_value(element_id, param_id)?;
-                match func.value {
-                    Value::Builtin(builtin) => match builtin {
-                        Builtin::Mod => {
-                            if any_dyn!(&param.value) {
-                                return Some(TypedValue {
-                                    value,
-                                    r#type: Value::ScopeTy,
-                                });
-                            }
-                            match param.value {
-                                Value::String(string_id) => {
-                                    let str = erase(self).id2str(string_id);
-                                    let path = Path::new(SRC_PATH)
-                                        .join(str.deref())
-                                        .with_extension(SRC_FILE_EXTENSION);
-                                    let abs_path = self.get_worksapce_path().join(&path);
-                                    if !abs_path.exists() {
-                                        let param = self.get(param_id);
-                                        unsafe {
-                                            self.diagnose(
-                                                Location::Element(element_id),
-                                                Diagnostic::PathError {
-                                                    source: param
-                                                        .source
-                                                        .as_ref()
-                                                        .unwrap()
-                                                        .value_source
-                                                        .upcast(),
-                                                },
-                                            )
-                                        };
-                                        return None;
-                                    }
-                                    let module_id = self.depend_module(path, element_id)?;
-                                    if self.is_local_module(module_id) {
-                                        unsafe { self.run_module(module_id) };
-                                    };
-                                    let scope_id = if self.is_remote_module(module_id) {
-                                        let module = self.get_module(module_id);
-                                        *module.root_scope.get()?
-                                    } else {
-                                        let module = unsafe { self.get_module_local(module_id) };
-                                        module.root_scope?
-                                    };
-
-                                    TypedValue {
-                                        value: Value::Scope(scope_id),
-                                        r#type: Value::ScopeTy,
-                                    }
+                match func {
+                    Value::Static(value) => match value {
+                        StaticValue::Builtin(builtin) => match builtin {
+                            Builtin::Mod => {
+                                if let Some(scope) = merge_in!(self, param) {
+                                    return Some(Value::In {
+                                        scope,
+                                        r#type: Some(Type {
+                                            value: StaticValue::ScopeTy,
+                                            depth: 0,
+                                        }),
+                                    });
                                 }
-                                _ => return None,
+                                let path = *param.as_static().ok()?.as_string().ok()?;
+                                let str = erase(self).id2str(path);
+                                let path = Path::new(SRC_PATH)
+                                    .join(str.deref())
+                                    .with_extension(SRC_FILE_EXTENSION);
+                                let abs_path = self.get_worksapce_path().join(&path);
+                                if !abs_path.exists() {
+                                    let param = self.get(param_id);
+                                    unsafe {
+                                        self.diagnose(
+                                            Location::Element(element_id),
+                                            Diagnostic::PathError {
+                                                source: param
+                                                    .source
+                                                    .as_ref()
+                                                    .unwrap()
+                                                    .value_source
+                                                    .upcast(),
+                                            },
+                                        )
+                                    };
+                                    return None;
+                                }
+                                let module_id = self.depend_module(path, element_id)?;
+                                if self.is_local_module(module_id) {
+                                    unsafe { self.run_module(module_id) };
+                                };
+                                let scope_id = if self.is_remote_module(module_id) {
+                                    let module = self.get_module(module_id);
+                                    *module.root_scope.get()?
+                                } else {
+                                    let module = unsafe { self.get_module_local(module_id) };
+                                    module.root_scope?
+                                };
+
+                                Value::Static(StaticValue::Scope(scope_id))
                             }
-                        }
-                        Builtin::Diagnose => match param.value {
-                            Value::Scope(scope_id) => {
+                            Builtin::Diagnose => {
+                                let scope = *param.as_static().ok()?.as_scope().ok()?;
                                 let on_key = self.str2id("on");
                                 let source_key = self.str2id("source");
                                 let text_key = self.str2id("text");
 
-                                let Value::Int(on) = self
+                                let on = *self
                                     .depend_element_value(
                                         element_id,
-                                        self.find_element(scope_id, on_key, false)?,
+                                        self.find_element(scope, on_key, false)?,
                                         source.upcast(),
                                     )?
-                                    .value
-                                else {
-                                    return None;
-                                };
-                                let Value::String(text) = self
+                                    .as_static()
+                                    .ok()?
+                                    .as_int()
+                                    .ok()?;
+                                let text = *self
                                     .depend_element_value(
                                         element_id,
-                                        self.find_element(scope_id, text_key, false)?,
+                                        self.find_element(scope, text_key, false)?,
                                         source.upcast(),
                                     )?
-                                    .value
-                                else {
-                                    return None;
-                                };
-                                let Value::Element(source_element) = self
+                                    .as_static()
+                                    .ok()?
+                                    .as_string()
+                                    .ok()?;
+                                let source_element = *self
                                     .depend_element_value(
                                         element_id,
-                                        self.find_element(scope_id, source_key, false)?,
+                                        self.find_element(scope, source_key, false)?,
                                         source.upcast(),
-                                    )?
-                                    .value
-                                else {
-                                    return None;
-                                };
+                                    )?.as_static().ok()?.as_element().ok()?;
                                 if on != 0 && self.is_local(source_element) {
                                     unsafe {
                                         self.diagnose(
@@ -1300,25 +1228,13 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                         )
                                     };
                                 }
-                                TypedValue {
-                                    value: Value::Int(1),
-                                    r#type: Value::IntTy,
-                                }
+                                Value::Static(StaticValue::Trivial)
                             }
                             _ => return None,
                         },
                         _ => return None,
                     },
                     _ => {
-                        unsafe {
-                            self.diagnose(
-                                Location::Element(element_id),
-                                Diagnostic::CanNotCallOn {
-                                    source: source.upcast(),
-                                    value,
-                                },
-                            )
-                        };
                         return None;
                     }
                 }
@@ -1326,23 +1242,20 @@ pub trait InterpreterLikeMut: InterpreterLike {
             _ => return None,
         };
 
-        Some(value)
+        Some(expr)
     }
     /// # Panic
     /// - when concurrent, element is not in local thread.
     /// - element's value has been resolved.
-    fn set_element_value(&mut self, element_id: Id<Element>, value: TypedValue, resolved: bool) {
+    fn set_element_value(&mut self, element_id: Id<Element>, value: Value) {
         let element_local = unsafe { self.get_local_mut(element_id) };
-        element_local.value = value;
-        element_local.resolved = resolved;
-        if resolved {
-            if self.is_concurrent() {
-                let element = self.get(element_id);
-                element.value.set(value);
-            } else {
-                let element = unsafe { self.get_mut(element_id) };
-                element.value = OnceLock::from(value);
-            }
+        element_local.value = Some(value);
+        if self.is_concurrent() {
+            let element = self.get(element_id);
+            element.value.set(value);
+        } else {
+            let element = unsafe { self.get_mut(element_id) };
+            element.value = OnceLock::from(value);
         }
     }
     /// # Panic
@@ -1399,21 +1312,12 @@ pub trait InterpreterLikeMut: InterpreterLike {
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
         source: UntypedNode<'static>,
-    ) -> Option<TypedValue> {
-        let mut typed_value = self.get_element_value(dependency_id);
-        if let Some(typed_value) = &mut typed_value {
-            match typed_value.value {
-                Value::Dyn => {
-                    typed_value.value = Value::DynRef {
-                        element: dependency_id,
-                    }
-                }
-                _ => (),
-            }
-        } else {
+    ) -> Option<Value> {
+        let value = self.get_element_value(dependency_id);
+        if value.is_none() {
             self.depend_element(dependant_id, dependency_id, source, true);
         }
-        typed_value
+        value
     }
     /// # Panic
     /// - when concurrent, any element is not in local thread.
@@ -1421,7 +1325,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         &mut self,
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
-    ) -> Option<TypedValue> {
+    ) -> Option<Value> {
         let dependency = self.get(dependency_id);
         let source = dependency.source.as_ref().unwrap().value_source.upcast();
         self.depend_element_value(dependant_id, dependency_id, source)

@@ -19,7 +19,12 @@ use tower_lsp::{
 };
 
 use moss_interpreter::{
-    interpreter::{  Id, Interpreter, InterpreterLike, Node, UntypedNode, diagnose::Diagnostic, file::FileId, scope::Scope, value::ContextedValue
+    interpreter::{
+        Id, Interpreter, InterpreterLike, Node, UntypedNode,
+        diagnose::Diagnostic,
+        file::FileId,
+        scope::Scope,
+        value::{ContextedStaticValue, StaticValue, Value},
     },
     utils::erase_mut,
 };
@@ -130,10 +135,7 @@ impl LanguageServer {
                                 *source,
                                 format!(
                                     "can not find element in {}",
-                                    ContextedValue {
-                                        value: &value,
-                                        ctx: self.interpreter
-                                    }
+                                    value.with_ctx(self.interpreter)
                                 ),
                                 DiagnosticSeverity::ERROR,
                             ));
@@ -142,13 +144,7 @@ impl LanguageServer {
                         self.lsp_diagnostics
                             .push(self.language_server.make_diagnostic(
                                 *source,
-                                format!(
-                                    "can not call on {}",
-                                    ContextedValue {
-                                        value: &value,
-                                        ctx: self.interpreter
-                                    }
-                                ),
+                                format!("can not call on {}", value.with_ctx(self.interpreter)),
                                 DiagnosticSeverity::ERROR,
                             ));
                     }
@@ -175,7 +171,7 @@ impl LanguageServer {
                                 &*self.interpreter.id2str(*text),
                                 DiagnosticSeverity::ERROR,
                             ));
-                    },
+                    }
                 };
             }
             fn traverse(&mut self, scope_id: Id<Scope>) {
@@ -185,27 +181,26 @@ impl LanguageServer {
                     self.diagnose(diagnostic);
                 }
                 for element_id in scope.elements.values().copied() {
-                    let element_local = unsafe { self
-                        .interpreter
-                        .get_local(element_id) };
-                    let element = self
-                        .interpreter
-                        .get(element_id);
+                    let element_local = unsafe { self.interpreter.get_local(element_id) };
+                    let element = self.interpreter.get(element_id);
                     for diagnoistic in &element_local.diagnoistics {
                         self.diagnose(diagnoistic);
                     }
                     if let Some(authored) = &element.source {
                         if let Some(key_node) = authored.key_source {
-                            self.lsp_diagnostics
-                                .push(self.language_server.make_diagnostic(
+                            self.lsp_diagnostics.push(
+                                self.language_server.make_diagnostic(
                                     key_node.upcast(),
                                     format!(
-                                        "{}: {}",
-                                        element_local.value.value.with_ctx(self.interpreter),
-                                        element_local.value.r#type.with_ctx(self.interpreter)
+                                        "{}",
+                                        element_local
+                                            .value
+                                            .unwrap_or(Value::Static(StaticValue::Err))
+                                            .with_ctx(self.interpreter)
                                     ),
                                     DiagnosticSeverity::HINT,
-                                ));
+                                ),
+                            );
                         }
                     }
                 }

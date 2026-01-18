@@ -1,4 +1,4 @@
-use crate::{gen_pools, interpreter::Id, utils::pool::Pool};
+use crate::{gen_pools, interpreter::{Id, function::Function}, utils::pool::Pool};
 use slotmap::new_key_type;
 use std::{cell::UnsafeCell, sync::OnceLock};
 
@@ -8,7 +8,7 @@ use crate::interpreter::{
 };
 
 gen_pools! {
-    pub Pools{scopes:Scope,elements:Element}
+    pub Pools{scopes:Scope,elements:Element,functions:Function}
 }
 
 pub struct ModuleLocal {

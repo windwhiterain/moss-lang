@@ -19,6 +19,7 @@ pub struct Scope {
     pub authored: Option<ScopeAuthored>,
     pub module: ModuleId,
     pub local: UnsafeCell<ScopeLocal>,
+    pub depth: usize,
 }
 
 impl Managed for Scope{
@@ -42,7 +43,7 @@ impl Managed for Scope{
 }
 
 impl Scope {
-    pub fn new(parent: Option<Id<Scope>>, authored: Option<ScopeAuthored>, module: ModuleId) -> Self {
+    pub fn new(parent: Option<Id<Scope>>, authored: Option<ScopeAuthored>, module: ModuleId,depth:usize) -> Self {
         Self {
             elements: Default::default(),
             parent,
@@ -52,6 +53,7 @@ impl Scope {
                 children: Default::default(),
                 diagnoistics: Default::default(),
             }),
+            depth
         }
     }
     pub fn get_file(&self) -> Option<FileId> {

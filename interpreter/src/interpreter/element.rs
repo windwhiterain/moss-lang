@@ -4,7 +4,11 @@ use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner, diagnose::Diagnostic, file::FileId, scope::Scope, value::{TypedValue, Value}
+        Id, Managed, Owner,
+        diagnose::Diagnostic,
+        file::FileId,
+        scope::Scope,
+        value::{Expr, Value},
     },
     utils::{concurrent_string_interner::StringId, moss},
 };
@@ -17,11 +21,17 @@ pub enum ElementKey {
 
 #[derive(Debug)]
 pub struct ElementLocal {
-    pub value: TypedValue,
-    pub resolved: bool,
+    pub expr: Option<Expr>,
+    pub value: Option<Value>,
     pub dependency_count: i64,
     pub dependants: SmallVec<[Dependant; 4]>,
     pub diagnoistics: Vec<Diagnostic>,
+}
+
+impl ElementLocal{
+    pub fn is_resolved(&self)->bool{
+        self.value.is_some()
+    }
 }
 
 #[derive(Debug)]
@@ -29,30 +39,31 @@ pub struct Element {
     pub key: ElementKey,
     pub scope: Id<Scope>,
     pub source: Option<ElementSource>,
-    pub value: OnceLock<TypedValue>,
+    pub value: OnceLock<Value>,
     pub local: UnsafeCell<ElementLocal>,
 }
 
-impl Managed for Element{
+impl Managed for Element {
     const NAME: &str = "Element";
-    
+
     type Local = ElementLocal;
-    
-    fn get_local(&self)->&UnsafeCell<Self::Local> {
+
+    fn get_local(&self) -> &UnsafeCell<Self::Local> {
         &self.local
     }
-    
-    fn get_local_mut(&mut self)->&mut UnsafeCell<Self::Local> {
+
+    fn get_local_mut(&mut self) -> &mut UnsafeCell<Self::Local> {
         &mut self.local
     }
     type Onwer = Scope;
-    
-    fn get_owner(&self)->super::Owner<Self::Onwer> where Self: Sized {
+
+    fn get_owner(&self) -> super::Owner<Self::Onwer>
+    where
+        Self: Sized,
+    {
         Owner::Managed(self.scope)
     }
 }
-
-
 
 impl Element {
     pub fn new<'tree>(key: ElementKey, scope: Id<Scope>, source: Option<ElementSource>) -> Self {
@@ -62,26 +73,26 @@ impl Element {
             scope,
             source,
             local: UnsafeCell::new(ElementLocal {
-                value: TypedValue::err(),
+                expr: None,
+                value: None,
                 dependency_count: 0,
                 dependants: Default::default(),
-                resolved: false,
                 diagnoistics: Default::default(),
             }),
         }
     }
 }
 
-#[derive(Debug,Clone,Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct ElementSource {
     pub value_source: moss::Value<'static>,
     pub key_source: Option<moss::Name<'static>>,
 }
 
-#[derive(Debug,Clone,Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum ElementAuthored {
     Source { source: ElementSource, file: FileId },
-    Value { value: TypedValue },
+    Value { value: Value },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -93,5 +104,5 @@ pub struct Dependant {
 #[derive(Debug)]
 pub struct ElementDescriptor {
     pub key: ElementKey,
-    pub value: TypedValue,
+    pub value: Value,
 }
