@@ -1,5 +1,5 @@
 use smallvec::SmallVec;
-use std::{cell::UnsafeCell, sync::OnceLock};
+use std::{ sync::OnceLock};
 use type_sitter::UntypedNode;
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
         scope::Scope,
         value::{Expr, Value},
     },
-    utils::{concurrent_string_interner::StringId, moss},
+    utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -26,6 +26,7 @@ pub struct ElementLocal {
     pub dependency_count: i64,
     pub dependants: SmallVec<[Dependant; 4]>,
     pub diagnoistics: Vec<Diagnostic>,
+    pub is_running: bool,
 }
 
 impl ElementLocal{
@@ -66,18 +67,19 @@ impl Managed for Element {
 }
 
 impl Element {
-    pub fn new<'tree>(key: ElementKey, scope: Id<Scope>, source: Option<ElementSource>) -> Self {
+    pub fn new<'tree>(key: ElementKey, scope: Id<Scope>) -> Self {
         Self {
             key,
             value: Default::default(),
             scope,
-            source,
+            source:None,
             local: UnsafeCell::new(ElementLocal {
                 expr: None,
                 value: None,
                 dependency_count: 0,
                 dependants: Default::default(),
                 diagnoistics: Default::default(),
+                is_running: false,
             }),
         }
     }
@@ -92,13 +94,14 @@ pub struct ElementSource {
 #[derive(Debug, Clone, Copy)]
 pub enum ElementAuthored {
     Source { source: ElementSource, file: FileId },
-    Value { value: Value },
+    Expr(Expr),
+    Value(Value),
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Dependant {
     pub element_id: Id<Element>,
-    pub source: UntypedNode<'static>,
+    pub source: Option<UntypedNode<'static>>,
 }
 
 #[derive(Debug)]

@@ -1,9 +1,9 @@
-use std::{cell::UnsafeCell, collections::HashMap};
+use std::{collections::HashMap};
 
 use crate::{
     interpreter::{Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId, module::ModuleId
     },
-    utils::{concurrent_string_interner::StringId, moss},
+    utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
 
 #[derive(Debug)]

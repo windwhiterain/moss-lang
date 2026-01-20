@@ -1,9 +1,8 @@
 use enum_extract_macro::EnumExtract;
+use type_sitter::UntypedNode;
 
 use crate::interpreter::{
-    Id,
-    element::{Element, ElementKey},
-    scope::Scope,
+    Id, element::{Element, ElementKey}, function::Function, scope::Scope
 };
 use std::{
     fmt::{self, Debug, Display, Formatter},
@@ -45,6 +44,9 @@ pub enum StaticValue {
     Builtin(Builtin),
     Element(Id<Element>),
     ElementTy,
+    Function(Id<Function>),
+    FunctionTy,
+    FunctionOptimized(Id<Function>),
     Err,
     Trivial,
 }
@@ -66,11 +68,15 @@ pub enum Value {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Expr {
-    Ref {
+    Ref{
+        element:Id<Element>,
+        source: UntypedNode<'static>,
+    },
+    Find {
         name: StringId,
         source: moss::Name<'static>,
     },
-    FindRef {
+    FindIn {
         value: Id<Element>,
         key: StringId,
         key_source: moss::Name<'static>,
@@ -81,21 +87,63 @@ pub enum Expr {
         param: Id<Element>,
         source: moss::Call<'static>,
     },
-    Meta {
+    MetaFind {
         name: StringId,
         source: moss::Meta<'static>,
     },
-    FindMeta {
+    MetaFindIn {
         value: Id<Element>,
         key: StringId,
         key_source: moss::Name<'static>,
         source: moss::Find<'static>,
     },
+    FunctionOptimized(Id<Function>),
     Value(StaticValue),
 }
 
+impl Expr{
+    pub fn map_ref(mut self,mut map:impl FnMut(Id<Element>)->Id<Element>)->Self{
+        match &mut self {
+            Expr::Ref { element, source } => {
+                *element = map(*element);
+            },
+            Expr::FindIn { value, key, key_source, source } => {
+                *value = map(*value);
+            },
+            Expr::Call { func, param, source } => {
+                *func = map(*func);
+                *param = map(*param);
+            },
+            Expr::MetaFindIn { value, key, key_source, source } => {
+                *value = map(*value);
+            },
+            _=>(),
+        }
+        self
+    }
+    pub fn iter_ref(self,mut map:impl FnMut(Id<Element>))->Self{
+        match self {
+            Expr::Ref { element, source } => {
+                map(element);
+            },
+            Expr::FindIn { value, key, key_source, source } => {
+                map(value);
+            },
+            Expr::Call { func, param, source } => {
+                map(func);
+                map(param);
+            },
+            Expr::MetaFindIn { value, key, key_source, source } => {
+                map(value);
+            },
+            _=>(),
+        }
+        self
+    }
+}
+
 impl StaticValue {
-    pub fn with_ctx<'a, Ctx: InterpreterLike>(
+    pub fn with_ctx<'a, Ctx: InterpreterLike+?Sized>(
         &'a self,
         ctx: &'a Ctx,
     ) -> ContextedStaticValue<'a, Ctx> {
@@ -128,7 +176,7 @@ impl Value {
 }
 
 impl Value {
-    pub fn with_ctx<'a, Ctx>(&'a self, ctx: &'a Ctx) -> ContextedValue<'a, Ctx> {
+    pub fn with_ctx<'a, Ctx:?Sized>(&'a self, ctx: &'a Ctx) -> ContextedValue<'a, Ctx> {
         ContextedValue { value: self, ctx }
     }
 }
@@ -140,12 +188,12 @@ macro_rules! merge_in { ($ctx:expr, $( $x:expr ),* ) => {
     )* };
 }
 
-pub struct ContextedStaticValue<'a, T: InterpreterLike + ?Sized> {
+pub struct ContextedStaticValue<'a, Ctx: InterpreterLike + ?Sized> {
     pub value: &'a StaticValue,
-    pub ctx: &'a T,
+    pub ctx: &'a Ctx,
 }
 
-impl<'a, T: InterpreterLike> Display for ContextedStaticValue<'a, T> {
+impl<'a, Ctx: InterpreterLike+?Sized> Display for ContextedStaticValue<'a, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match *self.value {
             StaticValue::Int(x) => write!(f, "{x}"),
@@ -158,12 +206,12 @@ impl<'a, T: InterpreterLike> Display for ContextedStaticValue<'a, T> {
             StaticValue::Builtin(builtin) => write!(f, "~{}", builtin),
             StaticValue::Err => write!(f, "Err"),
             StaticValue::String(string) => {
-                write!(f, "{}", self.ctx.id2str(string).deref())
+                write!(f, "\"{}\"", self.ctx.id2str(string).deref())
             }
             StaticValue::StringTy => write!(f, "String"),
             StaticValue::Element(element_id) => write!(
                 f,
-                "{}",
+                "@{}",
                 {
                     let element = self.ctx.get(element_id);
                     let ElementKey::Name(name) = element.key else {
@@ -174,17 +222,20 @@ impl<'a, T: InterpreterLike> Display for ContextedStaticValue<'a, T> {
                 .deref()
             ),
             StaticValue::ElementTy => write!(f, "Element"),
-            StaticValue::Trivial => write!(f, "Trivial"),
+            StaticValue::Trivial => write!(f, "()"),
+            StaticValue::Function(id) => write!(f,"->{{}}"),
+            StaticValue::FunctionTy => write!(f,"Function"),
+            StaticValue::FunctionOptimized(id) => write!(f,"->{{}}*"),
         }
     }
 }
 
-pub struct ContextedValue<'a, Ctx> {
+pub struct ContextedValue<'a, Ctx:?Sized> {
     pub value: &'a Value,
     pub ctx: &'a Ctx,
 }
 
-impl<'a, Ctx: InterpreterLike> Display for ContextedValue<'a, Ctx> {
+impl<'a, Ctx: InterpreterLike+?Sized> Display for ContextedValue<'a, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match *self.value {
             Value::Static(static_value) => static_value.with_ctx(self.ctx).fmt(f),

@@ -36,7 +36,7 @@ impl<T> Pool<T> {
             length: 0,
         }
     }
-    pub fn insert(&mut self, value: T) -> (*mut T, &mut T) {
+    pub fn insert(&mut self, value: T) -> &mut T {
         if self.chuncks.is_empty() {
             self.chuncks.push(Box::new_uninit_slice(8));
         }
@@ -54,7 +54,7 @@ impl<T> Pool<T> {
         let ptr = item as *mut T;
         self.next_idx += 1;
         self.length += 1;
-        (ptr, item)
+        item
     }
     pub fn clear(&mut self) {
         for raw_item in self.iter_raw_mut() {
@@ -104,7 +104,7 @@ macro_rules! gen_pools {
         $(#[$outer])*
         #[derive(Default)]
         $vis struct $name{
-            $($field:$crate::utils::pool::Pool<$type>,)*
+            $(pub $field:$crate::utils::pool::Pool<$type>,)*
         }
 
         $(

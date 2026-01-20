@@ -1,6 +1,6 @@
 use crate::{gen_pools, interpreter::{Id, function::Function}, utils::pool::Pool};
 use slotmap::new_key_type;
-use std::{cell::UnsafeCell, sync::OnceLock};
+use std::{cell::UnsafeCell, fmt::Debug, sync::OnceLock};
 
 use crate::interpreter::{
     element::Element,
@@ -8,9 +8,11 @@ use crate::interpreter::{
 };
 
 gen_pools! {
+    #[derive(Debug)]
     pub Pools{scopes:Scope,elements:Element,functions:Function}
 }
 
+#[derive(Debug)]
 pub struct ModuleLocal {
     pub pools: Pools,
     pub authored: Option<ScopeAuthored>,
@@ -22,6 +24,12 @@ pub struct ModuleLocal {
 pub struct Module {
     pub local: UnsafeCell<ModuleLocal>,
     pub root_scope: OnceLock<Id<Scope>>,
+}
+
+impl Debug for Module{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Module").field("local", unsafe { self.local.as_ref_unchecked() }).field("root_scope", &self.root_scope).finish()
+    }
 }
 
 impl ModuleLocal {
