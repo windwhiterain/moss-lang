@@ -2,7 +2,7 @@ use enum_extract_macro::EnumExtract;
 use type_sitter::UntypedNode;
 
 use crate::interpreter::{
-    Id, element::{Element, ElementKey}, function::Function, scope::Scope
+    Id, element::{Element, ElementKey}, function::Function, scope::{Scope, ScopeSource}
 };
 use std::{
     fmt::{self, Debug, Display, Formatter},

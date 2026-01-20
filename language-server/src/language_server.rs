@@ -20,14 +20,11 @@ use tower_lsp::{
 
 use moss_interpreter::{
     interpreter::{
-        Id, Interpreter, InterpreterLike, Node, UntypedNode,
-        diagnose::Diagnostic,
-        file::FileId,
-        scope::Scope,
-        value::{ContextedStaticValue, StaticValue, Value},
+        Id, Interpreter, InterpreterLike, Node, SRC_FILE_EXTENSION, UntypedNode, diagnose::Diagnostic, file::FileId, scope::Scope, value::{ContextedStaticValue, StaticValue, Value}
     },
     utils::erase_mut,
 };
+use walkdir::WalkDir;
 
 pub struct LanguageServer {
     pub client: Client,
@@ -188,8 +185,8 @@ impl LanguageServer {
                     }
                     if let Some(authored) = &element.source {
                         if let Some(key_node) = authored.key_source {
-                            self.lsp_diagnostics.push(
-                                self.language_server.make_diagnostic(
+                            self.lsp_diagnostics
+                                .push(self.language_server.make_diagnostic(
                                     key_node.upcast(),
                                     format!(
                                         "{}",
@@ -199,8 +196,7 @@ impl LanguageServer {
                                             .with_ctx(self.interpreter)
                                     ),
                                     DiagnosticSeverity::HINT,
-                                ),
-                            );
+                                ));
                         }
                     }
                 }
@@ -222,10 +218,8 @@ impl LanguageServer {
         let Some(module_id) = file.is_module else {
             return;
         };
-        let module = unsafe { interpreter.get_module_local(module_id) };
-        let Some(scope_id) = module.root_scope else {
-            return;
-        };
+        let module = unsafe { interpreter.get_module(module_id) };
+        let scope_id = *interpreter.get_element_value(module.root_scope.unwrap()).unwrap().as_static().unwrap().as_scope().unwrap();
 
         let mut context = Context {
             file_id,
@@ -242,23 +236,23 @@ impl LanguageServer {
     }
     pub async fn run(&self) {
         {
-            let entry_path = PathBuf::from_str("src/_.moss").unwrap();
-            if !entry_path.exists() {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!("can't find entry file at {}", entry_path.display()),
-                    )
-                    .await;
-                return;
-            }
             let Some(interpreter) = self.interpreter.get() else {
                 return;
             };
             let mut interpreter = interpreter.write().await;
             interpreter.clear();
             interpreter.init();
-            interpreter.add_module(Some(entry_path));
+            for entry in WalkDir::new(interpreter.get_src_path()).into_iter().filter_map(Result::ok) {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(extension) = path.extension(){
+                        if extension == SRC_FILE_EXTENSION{
+                            let path = path.strip_prefix(interpreter.get_worksapce_path()).unwrap().to_path_buf();
+                            interpreter.add_module(Some(path));
+                        }
+                    }
+                }
+            }
             interpreter.run().await;
         }
         {

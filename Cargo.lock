@@ -1002,6 +1002,7 @@ dependencies = [
  "moss-interpreter",
  "tokio",
  "tower-lsp",
+ "walkdir",
 ]
 
 [[package]]

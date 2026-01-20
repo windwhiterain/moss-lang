@@ -17,13 +17,12 @@ pub struct ModuleLocal {
     pub pools: Pools,
     pub authored: Option<ScopeAuthored>,
     pub dependants: Vec<Id<Element>>,
-    pub root_scope: Option<Id<Scope>>,
     pub unresolved_count: usize,
 }
 
 pub struct Module {
     pub local: UnsafeCell<ModuleLocal>,
-    pub root_scope: OnceLock<Id<Scope>>,
+    pub root_scope: Option<Id<Element>>,
 }
 
 impl Debug for Module{
@@ -33,9 +32,6 @@ impl Debug for Module{
 }
 
 impl ModuleLocal {
-    pub fn has_runed(&self) -> bool {
-        self.root_scope.is_some()
-    }
     pub fn is_resolved(&self) -> bool {
         self.unresolved_count == 0
     }
@@ -48,7 +44,6 @@ impl Module {
                 pools: Default::default(),
                 authored,
                 dependants: Default::default(),
-                root_scope: Default::default(),
                 unresolved_count: if resolved { 0 } else { 1 },
             }),
             root_scope: Default::default(),

@@ -12,6 +12,7 @@ tokio = { workspace = true, features = [
 ] }
 tower-lsp = "0.20.0"
 moss-interpreter = {path = "../interpreter"}
+walkdir = "2.5.0"
 
 [build-dependencies]
 cc = "*"

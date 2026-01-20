@@ -80,8 +80,8 @@ pub mod scope;
 pub mod thread;
 pub mod value;
 
-static SRC_FILE_EXTENSION: &str = "moss";
-static SRC_PATH: &str = "src";
+pub const SRC_FILE_EXTENSION: &str = "moss";
+pub const SRC_PATH: &str = "src";
 
 pub struct Id<T>(pub usize, PhantomData<T>);
 
@@ -246,15 +246,22 @@ impl Interpreter {
         self.add_element(
             ElementKey::Name(mod_id),
             scope,
-            ElementAuthored::Value(Value::Static(StaticValue::Builtin(Builtin::Mod))),
+            Some(ElementAuthored::Value(Value::Static(StaticValue::Builtin(
+                Builtin::Mod,
+            )))),
         );
         let diagnose_id = self.str2id("diagnose");
         self.add_element(
             ElementKey::Name(diagnose_id),
             scope,
-            ElementAuthored::Value(Value::Static(StaticValue::Builtin(Builtin::Diagnose))),
+            Some(ElementAuthored::Value(Value::Static(StaticValue::Builtin(
+                Builtin::Diagnose,
+            )))),
         );
-        self.set_root_scope(module, scope.get_id());
+        self.set_element_value(
+            self.get_module(module).root_scope.unwrap(),
+            Value::Static(StaticValue::Scope(scope.get_id())),
+        );
         self.builtin_module = Some(module);
     }
     pub fn clear(&mut self) {
@@ -310,85 +317,72 @@ impl Interpreter {
             self.unresolved_modules.push(id);
             self.increase_workload();
         }
+        let builtin_scope = unsafe { erase_mut(self).add_scope(None, None, id) };
+        let root_scope = self
+            .add_element(ElementKey::Temp, builtin_scope, None)
+            .unwrap();
+        let module = self.modules.get_mut(id).unwrap();
+        module.root_scope = Some(root_scope);
         id
     }
     pub async fn run(&mut self) {
-        log::error!("run(");
         assert!(!self.is_concurrent);
+        self.concurrent.module2thread.clear();
+        self.concurrent.threads.clear();
+        self.concurrent.strings.sync_from(&self.strings);
+        let mut thread_num: usize = available_parallelism().unwrap().into();
+        let mut module_num = self.unresolved_modules.len();
+        if module_num == 0 {
+            return;
+        }
+        log::error!(
+            "run (: thread_num: {}, module_num: {}",
+            thread_num,
+            module_num
+        );
+        let mut modules = self.unresolved_modules.iter();
         loop {
-            self.concurrent.module2thread.clear();
-            self.concurrent.threads.clear();
-            self.concurrent.strings.sync_from(&self.strings);
-            let mut thread_num: usize = available_parallelism().unwrap().into();
-            let mut module_num = self.unresolved_modules.len();
-            if module_num == 0 {
+            let mut module_per_thread = module_num.div_ceil(thread_num);
+            if module_per_thread == 0 {
                 break;
             }
-            log::error!(
-                "run loop(: thread_num: {}, module_num: {}",
-                thread_num,
-                module_num
-            );
-            let mut modules = self.unresolved_modules.iter();
+            let mut module_ids = vec![];
             loop {
-                let mut module_per_thread = module_num.div_ceil(thread_num);
+                let id = modules.next().unwrap();
+                module_ids.push(id);
+                let thread_id = self
+                    .concurrent
+                    .threads
+                    .insert(Thread::new(Default::default()));
+                self.concurrent.module2thread.insert(id, thread_id);
+                module_per_thread -= 1;
+                module_num -= 1;
                 if module_per_thread == 0 {
+                    let thread = self.concurrent.threads.get_mut(thread_id);
+                    thread.local.get_mut().modules = module_ids;
                     break;
                 }
-                let mut module_ids = vec![];
-                loop {
-                    let id = modules.next().unwrap();
-                    module_ids.push(id);
-                    let thread_id = self
-                        .concurrent
-                        .threads
-                        .insert(Thread::new(Default::default()));
-                    self.concurrent.module2thread.insert(id, thread_id);
-                    module_per_thread -= 1;
-                    module_num -= 1;
-                    if module_per_thread == 0 {
-                        let thread = self.concurrent.threads.get_mut(thread_id);
-                        thread.local.get_mut().modules = module_ids;
-                        break;
-                    }
-                }
-                thread_num -= 1;
             }
-            self.is_concurrent = true;
-            let mut set = JoinSet::new();
-            for thread in self.concurrent.threads.keys() {
-                let mut thread_interpreter = ThreadedInterpreter {
-                    interpreter: erase(self),
-                    thread,
-                    workload_zero: Some(erase(self).concurrent.workload_zero.notified()),
-                };
-                set.spawn(async move { thread_interpreter.run().await });
-            }
-            log::error!("join_all(");
-            set.join_all().await;
-            log::error!("join_all)");
-            self.strings.sync_from(&self.concurrent.strings);
-            self.is_concurrent = false;
-            erase_mut(self)
-                .unresolved_modules
-                .retain(|key| unsafe { self.get_module_local(key) }.is_resolved());
-            let mut has_new_module = false;
-            for thread_id in erase(self).concurrent.threads.keys() {
-                let thread = erase_mut(self).get_thread_local_mut(thread_id);
-                for (path, dependants) in mem::take(&mut thread.add_module_delay.files) {
-                    let module_id = self.add_module(Some(path));
-                    let module = unsafe { self.get_module_local_mut(module_id) };
-                    for dependant in dependants.iter().copied() {
-                        module.dependants.push(dependant);
-                    }
-                    has_new_module = true;
-                }
-            }
-            log::error!("run loop)");
-            if !has_new_module {
-                break;
-            }
+            thread_num -= 1;
         }
+        self.is_concurrent = true;
+        let mut set = JoinSet::new();
+        for thread in self.concurrent.threads.keys() {
+            let mut thread_interpreter = ThreadedInterpreter {
+                interpreter: erase(self),
+                thread,
+                workload_zero: Some(erase(self).concurrent.workload_zero.notified()),
+            };
+            set.spawn(async move { thread_interpreter.run().await });
+        }
+        log::error!("join_all(");
+        set.join_all().await;
+        log::error!("join_all)");
+        self.strings.sync_from(&self.concurrent.strings);
+        self.is_concurrent = false;
+        erase_mut(self)
+            .unresolved_modules
+            .retain(|key| unsafe { self.get_module_local(key) }.is_resolved());
         log::error!("run)");
         log::error!("interpreter: {:#?}", self.modules);
     }
@@ -419,9 +413,7 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
         let mut unresolved_num = modules.len();
         for module_id in modules.iter().copied() {
             let module = erase_mut(unsafe { self.get_module_local_mut(module_id) });
-            if !module.has_runed() {
-                unsafe { self.run_module(module_id) };
-            }
+            unsafe { self.run_module(module_id) };
             if module.is_resolved() {
                 unresolved_num -= 1;
             }
@@ -505,6 +497,9 @@ pub trait InterpreterLike {
         self.is_remote_module(self.get_module_of(id))
     }
     fn get_worksapce_path(&self) -> &Path;
+    fn get_src_path(&self) -> PathBuf {
+        self.get_worksapce_path().join(SRC_PATH)
+    }
     /// # Panic
     /// run without init since new or last clear.
     fn get_builtin_module(&self) -> ModuleId;
@@ -577,8 +572,15 @@ pub trait InterpreterLike {
             Some(raw)
         } else {
             let builtin_module = self.get_builtin_module();
-            let scope = self
-                .get::<Scope>(unsafe { self.get_module_local(builtin_module).root_scope.unwrap() });
+            let scope = self.get::<Scope>(
+                *self
+                    .get_element_value(self.get_module(builtin_module).root_scope.unwrap())
+                    .unwrap()
+                    .as_static()
+                    .unwrap()
+                    .as_scope()
+                    .unwrap(),
+            );
             if let Some(id) = scope.elements.get(&key).copied() {
                 Some(id)
             } else {
@@ -799,7 +801,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     },
                     file: authored.file,
                 };
-                let _ = self.add_element(ElementKey::Name(name), scope, element_authored);
+                let _ = self.add_element(ElementKey::Name(name), scope, Some(element_authored));
             }
         }
         scope
@@ -808,19 +810,19 @@ pub trait InterpreterLikeMut: InterpreterLike {
         &mut self,
         key: ElementKey,
         scope: &mut Scope,
-        authored: ElementAuthored,
+        authored: Option<ElementAuthored>,
     ) -> Result<Id<Element>, ()> {
         struct Context<'a, IP: ?Sized> {
             interpreter: &'a mut IP,
             key: ElementKey,
             scope: &'a mut Scope,
-            authored: ElementAuthored,
+            authored: Option<ElementAuthored>,
         }
         let mut ctx = Context {
             interpreter: self,
             key,
             scope,
-            authored
+            authored,
         };
 
         impl<'a, IP: InterpreterLikeMut + ?Sized> Context<'a, IP> {
@@ -831,22 +833,24 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     .insert(Element::new(self.key, self.scope.get_id()));
                 value
             }
-            fn add(&mut self)->Option<&mut Element> {
+            fn add(&mut self) -> Option<&mut Element> {
                 match self.key {
                     ElementKey::Name(name) => match erase_mut(self).scope.elements.entry(name) {
                         std::collections::hash_map::Entry::Occupied(occupied_entry) => {
-                            if let ElementAuthored::Source { source, file } = self.authored {
-                                let source = if let Some(key_source) = source.key_source {
-                                    key_source.upcast()
-                                } else {
-                                    source.value_source.upcast()
-                                };
-                                unsafe {
-                                    self.interpreter.diagnose(
-                                        Location::Scope(self.scope.get_id()),
-                                        Diagnostic::RedundantElementKey { source },
-                                    )
-                                };
+                            if let Some(authored) = self.authored {
+                                if let ElementAuthored::Source { source, file } = authored {
+                                    let source = if let Some(key_source) = source.key_source {
+                                        key_source.upcast()
+                                    } else {
+                                        source.value_source.upcast()
+                                    };
+                                    unsafe {
+                                        self.interpreter.diagnose(
+                                            Location::Scope(self.scope.get_id()),
+                                            Diagnostic::RedundantElementKey { source },
+                                        )
+                                    };
+                                }
                             }
                             return None;
                         }
@@ -861,34 +865,33 @@ pub trait InterpreterLikeMut: InterpreterLike {
             }
         }
         let element = erase_mut(ctx.add().ok_or(())?);
-        match authored {
-            ElementAuthored::Source { source, file } => {
-                element.source = Some(source);
-                let expr = unsafe {
-                    self.parse_value(Ok(source.value_source), element.get_id(), scope, file)
-                };
-                let element_local = element.local.get_mut();
-                element_local.expr = expr;
-
-                let module = unsafe { self.get_module_local_mut(scope.module) };
-                module.unresolved_count += 1;
-                let unresolved_count = module.unresolved_count;
-                log::error!("{:?}: add {}", element.get_id(), unresolved_count);
+        'unresolve: {
+            if let Some(authored) = authored {
+                match authored {
+                    ElementAuthored::Source { source, file } => {
+                        element.source = Some(source);
+                        let expr = unsafe {
+                            self.parse_value(Ok(source.value_source), element.get_id(), scope, file)
+                        };
+                        let element_local = element.local.get_mut();
+                        element_local.expr = expr;
+                    }
+                    ElementAuthored::Value(value) => {
+                        let element_local = element.local.get_mut();
+                        element_local.value = Some(value);
+                        element.value = OnceLock::from(value);
+                        break 'unresolve;
+                    }
+                    ElementAuthored::Expr(expr) => {
+                        let element_local = element.local.get_mut();
+                        element_local.expr = Some(expr);
+                    }
+                }
             }
-            ElementAuthored::Value(value) => {
-                let element_local = element.local.get_mut();
-                element_local.value = Some(value);
-                element.value = OnceLock::from(value);
-            }
-            ElementAuthored::Expr(expr) => {
-                let element_local = element.local.get_mut();
-                element_local.expr = Some(expr);
-
-                let module = unsafe { self.get_module_local_mut(scope.module) };
-                module.unresolved_count += 1;
-                let unresolved_count = module.unresolved_count;
-                log::error!("{:?}: add {}", element.get_id(), unresolved_count);
-            }
+            let module = unsafe { self.get_module_local_mut(scope.module) };
+            module.unresolved_count += 1;
+            let unresolved_count = module.unresolved_count;
+            log::error!("{:?}: add {}", element.get_id(), unresolved_count);
         }
         Ok(element.get_id())
     }
@@ -921,26 +924,26 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     .add_element(
                         ElementKey::Temp,
                         parent,
-                        ElementAuthored::Source {
+                        Some(ElementAuthored::Source {
                             source: ElementSource {
                                 value_source: func,
                                 key_source: None,
                             },
                             file: file_id,
-                        },
+                        }),
                     )
                     .unwrap();
                 let param_element = self
                     .add_element(
                         ElementKey::Temp,
                         parent,
-                        ElementAuthored::Source {
+                        Some(ElementAuthored::Source {
                             source: ElementSource {
                                 value_source: param,
                                 key_source: None,
                             },
                             file: file_id,
-                        },
+                        }),
                     )
                     .unwrap();
                 Expr::Call {
@@ -970,13 +973,13 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     .add_element(
                         ElementKey::Temp,
                         parent,
-                        ElementAuthored::Source {
+                        Some(ElementAuthored::Source {
                             source: ElementSource {
                                 value_source: value,
                                 key_source: None,
                             },
                             file: file_id,
-                        },
+                        }),
                     )
                     .unwrap();
                 Expr::FindIn {
@@ -1069,10 +1072,10 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     .add_element(
                         ElementKey::Name(r#in),
                         scope,
-                        ElementAuthored::Value(Value::In {
+                        Some(ElementAuthored::Value(Value::In {
                             scope: scope.get_id(),
                             r#type: None,
-                        }),
+                        })),
                     )
                     .ok()?;
 
@@ -1090,7 +1093,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     .add_element(
                         ElementKey::Temp,
                         scope,
-                        ElementAuthored::Expr(Expr::FunctionOptimized(function.get_id())),
+                        Some(ElementAuthored::Expr(Expr::FunctionOptimized(
+                            function.get_id(),
+                        ))),
                     )
                     .ok()?;
                 function.complete = complete;
@@ -1140,21 +1145,22 @@ pub trait InterpreterLikeMut: InterpreterLike {
     /// - `module_id` is local.
     unsafe fn run_module(&mut self, module_id: ModuleId) {
         log::error!("run module(: {:?}", module_id);
-        let module = unsafe { erase_mut(self).get_module_local_mut(module_id) };
-        if module.has_runed() {
-            return;
-        }
-        if let Some(authored) = module.authored {
+        let module_local = unsafe { erase_mut(self).get_module_local_mut(module_id) };
+        let root_scope_element = self.get_module(module_id).root_scope.unwrap();
+        if let Some(authored) = module_local.authored {
             let root_scope = unsafe { self.add_scope(None, Some(authored), module_id) }.get_id();
-            self.set_root_scope(module_id, root_scope);
-            for element in module.pools.get::<Element>().iter() {
+            self.set_element_value(
+                root_scope_element,
+                Value::Static(StaticValue::Scope(root_scope)),
+            );
+            for element in module_local.pools.get::<Element>().iter() {
                 unsafe {
                     // SAFETY: local: `module` -> `element`
                     self.run_element(element.get_id())
                 };
             }
-            module.unresolved_count -= 1;
-            for dependant in mem::take(&mut module.dependants) {
+            module_local.unresolved_count -= 1;
+            for dependant in mem::take(&mut module_local.dependants) {
                 self.resolve_element(dependant);
             }
             self.decrease_workload();
@@ -1197,9 +1203,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
 
         {
             let element_local = unsafe { self.get_local_mut(element_id) };
+            element_local.is_running = false;
             element_local.expr = Some(expr);
             if element_local.dependency_count > 0 {
-                element_local.is_running = false;
                 return;
             }
         }
@@ -1208,23 +1214,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
             element_id,
             resolved_value.unwrap_or(Value::Static(StaticValue::Err)),
         );
-        let module =
-            unsafe { self.get_module_local_mut(self.get(self.get(element_id).scope).module) };
-        module.unresolved_count -= 1;
-        let unresolved_count = module.unresolved_count;
-        log::error!("{element_id:?}: run: {}", unresolved_count);
-
-        let element_local = unsafe { self.get_local_mut(element_id) };
-        log::error!(
-            "{element_id:?}: resolved: {}, dependencies_len: {}",
-            element_local.is_resolved(),
-            element_local.dependants.len()
-        );
-        for dependant in mem::take(&mut element_local.dependants) {
-            self.resolve_element(dependant.element_id);
-        }
-        let element_local = unsafe { self.get_local_mut(element_id) };
-        element_local.is_running = false;
     }
     /// # Panic
     /// - when concurrent, element is not in local thread.
@@ -1367,37 +1356,21 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                 let path = Path::new(SRC_PATH)
                                     .join(str.deref())
                                     .with_extension(SRC_FILE_EXTENSION);
-                                let abs_path = self.get_worksapce_path().join(&path);
-                                if !abs_path.exists() {
-                                    let param = self.get(param_id);
-                                    unsafe {
-                                        self.diagnose(
-                                            Location::Element(element_id),
-                                            Diagnostic::PathError {
-                                                source: param
-                                                    .source
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .value_source
-                                                    .upcast(),
-                                            },
-                                        )
-                                    };
-                                    return None;
-                                }
-                                let module_id = self.depend_module(path, element_id)?;
-                                if self.is_local_module(module_id) {
-                                    unsafe { self.run_module(module_id) };
-                                };
-                                let scope_id = if self.is_remote_module(module_id) {
-                                    let module = self.get_module(module_id);
-                                    *module.root_scope.get()?
-                                } else {
-                                    let module = unsafe { self.get_module_local(module_id) };
-                                    module.root_scope?
-                                };
+                                let file = self.find_file(path)?;
+                                let module_id = self.get_file(file).is_module?;
+                                let module = self.get_module(module_id);
+                                let root_scope = *self
+                                    .depend_element_value(
+                                        element_id,
+                                        module.root_scope.unwrap(),
+                                        Some(source.upcast()),
+                                    )?
+                                    .as_static()
+                                    .ok()?
+                                    .as_scope()
+                                    .ok()?;
 
-                                Value::Static(StaticValue::Scope(scope_id))
+                                Value::Static(StaticValue::Scope(root_scope))
                             }
                             Builtin::Diagnose => {
                                 let scope = *param.as_static().ok()?.as_scope().ok()?;
@@ -1537,7 +1510,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                                     };
                                     let new_id = self
                                         .interpreter
-                                        .add_element(function_element.key, scope, authored)
+                                        .add_element(function_element.key, scope, Some(authored))
                                         .unwrap();
                                     if self.element_map.len() <= id.0 {
                                         self.element_map.resize(id.0 + 1, Default::default());
@@ -1742,25 +1715,22 @@ pub trait InterpreterLikeMut: InterpreterLike {
         element_local.value = Some(value);
         if self.is_concurrent() {
             let element = self.get(element_id);
-            element.value.set(value);
+            element.value.set(value).unwrap();
         } else {
             let element = unsafe { self.get_mut(element_id) };
             element.value = OnceLock::from(value);
         }
-    }
-    /// # Panic
-    /// when concurrent, element is not in local thread.
-    fn depend_module_raw(&mut self, path: PathBuf, element_id: Id<Element>) -> Option<ModuleId>;
-    /// # Panic
-    /// when concurrent, element is not in local thread.
-    fn depend_module(&mut self, path: PathBuf, element_id: Id<Element>) -> Option<ModuleId> {
-        if let Some(file) = self.find_file(&path) {
-            let file = self.get_file(file);
-            if let Some(module) = file.is_module {
-                return Some(module);
-            }
+
+        let module =
+            unsafe { self.get_module_local_mut(self.get(self.get(element_id).scope).module) };
+        module.unresolved_count -= 1;
+        let unresolved_count = module.unresolved_count;
+        log::error!("{:?}: set {}", element_id, unresolved_count);
+
+        let element_local = unsafe { self.get_local_mut(element_id) };
+        for dependant in mem::take(&mut element_local.dependants) {
+            self.resolve_element(dependant.element_id);
         }
-        self.depend_module_raw(path, element_id)
     }
     /// # Panic
     /// - when concurrent, dependant is not in local thread.
@@ -1847,18 +1817,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
             let thread = self.get_thread_remote_of(id).unwrap();
             thread.channel.push(Signal::Resolve(id));
             self.increase_workload();
-        }
-    }
-    /// # Safety
-    /// - `module_id` is local.
-    /// - `scope_id` is in `module_id`.
-    fn set_root_scope(&mut self, module_id: ModuleId, scope_id: Id<Scope>) {
-        debug_assert!(self.get(scope_id).module == module_id);
-        unsafe { self.get_module_local_mut(module_id) }.root_scope = Some(scope_id);
-        if self.is_concurrent() {
-            self.get_module(module_id).root_scope.set(scope_id).unwrap();
-        } else {
-            unsafe { self.get_module_mut(module_id) }.root_scope = OnceLock::from(scope_id);
         }
     }
 }
@@ -1990,10 +1948,6 @@ impl InterpreterLikeMut for Interpreter {
         self.modules.get_mut(id).unwrap()
     }
 
-    fn depend_module_raw(&mut self, path: PathBuf, element_id: Id<Element>) -> Option<ModuleId> {
-        Some(self.add_module(Some(path)))
-    }
-
     fn increase_workload(&mut self) {
         let workload = self.concurrent.workload.get_mut();
         *workload += 1;
@@ -2041,18 +1995,6 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
 
     unsafe fn get_module_mut_raw(&mut self, _id: ModuleId) -> &mut Module {
         unreachable!()
-    }
-
-    fn depend_module_raw(&mut self, path: PathBuf, element_id: Id<Element>) -> Option<ModuleId> {
-        let element = unsafe { self.get_local_mut(element_id) };
-        element.dependency_count += 1;
-        let add_module_delay = &mut self.get_thread_local_mut(self.thread).add_module_delay;
-        add_module_delay
-            .files
-            .entry(path)
-            .or_default()
-            .push(element_id);
-        None
     }
 
     fn increase_workload(&mut self) {

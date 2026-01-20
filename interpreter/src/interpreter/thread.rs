@@ -15,7 +15,6 @@ new_type! {
 
 pub struct ThreadLocal {
     pub modules: Vec<ModuleId>,
-    pub add_module_delay: AddModuleDelay,
 }
 
 pub struct ThreadRemote {
@@ -37,9 +36,6 @@ impl Thread {
         Self {
             local: UnsafeCell::new(ThreadLocal {
                 modules: module_ids,
-                add_module_delay: AddModuleDelay {
-                    files: Default::default(),
-                },
             }),
             remote: ThreadRemote {
                 channel: Arc::new(Stack::new()),
@@ -57,14 +53,4 @@ pub struct Depend {
 pub enum Signal {
     Depend(Depend),
     Resolve(Id<Element>),
-}
-
-pub struct AddModuleDelay {
-    pub files: HashMap<PathBuf, Vec<Id<Element>>>,
-}
-
-pub struct AddModuleDelayScope {
-    pub file: FileId,
-    pub scope: moss::Scope<'static>,
-    pub element: Id<Element>,
 }
