@@ -1,26 +1,30 @@
-
-
 use crate::{
     interpreter::{
-        Id, Managed, element::{Element, ElementKey}, expr::Expr, module::ModuleId, scope::Scope, value::Value
-    }, utils::{concurrent_string_interner::StringId, unsafe_cell::UnsafeCell},
+        Id, Managed,
+        element::{Element, ElementKey},
+        expr::Expr,
+        module::ModuleId,
+        scope::Scope,
+        value::Value,
+    },
+    utils::unsafe_cell::UnsafeCell,
 };
 
 #[derive(Debug)]
-pub enum FunctionElementAuthored{
+pub enum FunctionElementAuthored {
     Expr(Expr),
     Value(Value),
 }
 
 #[derive(Debug)]
 pub struct FunctionElement {
-    pub authored:FunctionElementAuthored,
+    pub authored: FunctionElementAuthored,
     pub key: ElementKey,
 }
 
 #[derive(Debug)]
 pub struct FunctionScope {
-    pub elements:Vec<Id<Element>>,
+    pub elements: Vec<Id<Element>>,
 }
 
 #[derive(Debug)]
@@ -55,8 +59,8 @@ impl Function {
             complete,
             optimized: UnsafeCell::new(FunctionOptimized {
                 elements: Default::default(),
-                scopes:Default::default(),
-                root_scope:None
+                scopes: Default::default(),
+                root_scope: None,
             }),
         }
     }
@@ -92,7 +96,7 @@ pub struct ParamType {
 }
 
 #[derive(Debug)]
-pub struct Param{
+pub struct Param {
     pub function: Id<Function>,
     pub r#type: Option<ParamType>,
 }

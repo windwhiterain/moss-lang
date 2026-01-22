@@ -6,8 +6,8 @@ use crate::{
 };
 
 pub trait HasRef {
-    fn map_ref(&mut self, map: impl FnMut(Id<Element>) -> Id<Element>) {}
-    fn iter_ref(&self, map: impl FnMut(Id<Element>)) {}
+    fn map_ref(&mut self, _map: impl FnMut(Id<Element>) -> Id<Element>) {}
+    fn iter_ref(&self, _map: impl FnMut(Id<Element>)) {}
 }
 
 #[derive(Clone, Debug)]
@@ -97,7 +97,7 @@ pub enum Expr {
 }
 
 impl HasRef for Expr {
-    fn map_ref(&mut self, mut map: impl FnMut(Id<Element>) -> Id<Element>) {
+    fn map_ref(&mut self, map: impl FnMut(Id<Element>) -> Id<Element>) {
         match self {
             Expr::Ref(value) => value.map_ref(map),
             Expr::Find(value) => value.map_ref(map),
@@ -107,7 +107,7 @@ impl HasRef for Expr {
         }
     }
 
-    fn iter_ref(&self, mut map: impl FnMut(Id<Element>)) {
+    fn iter_ref(&self, map: impl FnMut(Id<Element>)) {
         match self {
             Expr::Ref(value) => value.iter_ref(map),
             Expr::Find(value) => value.iter_ref(map),

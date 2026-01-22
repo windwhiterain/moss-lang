@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::OnceLock,
 };
 
@@ -20,7 +19,11 @@ use tower_lsp::{
 
 use moss_interpreter::{
     interpreter::{
-        Id, Interpreter, InterpreterLike, Node, SRC_FILE_EXTENSION, UntypedNode, diagnose::Diagnostic, file::FileId, scope::Scope, value::{self, Value}
+        Id, Interpreter, InterpreterLike, Node, SRC_FILE_EXTENSION, UntypedNode,
+        diagnose::Diagnostic,
+        file::FileId,
+        scope::Scope,
+        value::{self, Value},
     },
     utils::{contexted::WithContext as _, erase_mut},
 };
@@ -219,7 +222,12 @@ impl LanguageServer {
             return;
         };
         let module = interpreter.get_module(module_id);
-        let scope_id = interpreter.get_element_value(module.root_scope.unwrap()).unwrap().as_scope().unwrap().0;
+        let scope_id = interpreter
+            .get_element_value(module.root_scope.unwrap())
+            .unwrap()
+            .as_scope()
+            .unwrap()
+            .0;
 
         let mut context = Context {
             file_id,
@@ -242,12 +250,18 @@ impl LanguageServer {
             let mut interpreter = interpreter.write().await;
             interpreter.clear();
             interpreter.init();
-            for entry in WalkDir::new(interpreter.get_src_path()).into_iter().filter_map(Result::ok) {
+            for entry in WalkDir::new(interpreter.get_src_path())
+                .into_iter()
+                .filter_map(Result::ok)
+            {
                 let path = entry.path();
                 if path.is_file() {
-                    if let Some(extension) = path.extension(){
-                        if extension == SRC_FILE_EXTENSION{
-                            let path = path.strip_prefix(interpreter.get_worksapce_path()).unwrap().to_path_buf();
+                    if let Some(extension) = path.extension() {
+                        if extension == SRC_FILE_EXTENSION {
+                            let path = path
+                                .strip_prefix(interpreter.get_worksapce_path())
+                                .unwrap()
+                                .to_path_buf();
                             interpreter.add_module(Some(path));
                         }
                     }
@@ -314,7 +328,7 @@ impl LanguageServerLike for LanguageServer {
         })
     }
 
-    async fn initialized(&self, params: InitializedParams) {
+    async fn initialized(&self, _params: InitializedParams) {
         self.client
             .log_message(MessageType::INFO, "Moss Language Server initialized")
             .await;
@@ -361,7 +375,7 @@ impl LanguageServerLike for LanguageServer {
         self.run().await;
     }
 
-    async fn hover(&self, params: HoverParams) -> tower_lsp::jsonrpc::Result<Option<Hover>> {
+    async fn hover(&self, _params: HoverParams) -> tower_lsp::jsonrpc::Result<Option<Hover>> {
         let contents = HoverContents::Scalar(MarkedString::String("kkk".to_string()));
         Ok(Some(Hover {
             contents,

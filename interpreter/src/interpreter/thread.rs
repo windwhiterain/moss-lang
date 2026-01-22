@@ -1,11 +1,11 @@
-use std::{cell::UnsafeCell, collections::HashMap, path::PathBuf, sync::Arc};
+use std::{cell::UnsafeCell, sync::Arc};
 
 use type_sitter::UntypedNode;
 
 use crate::{
-    interpreter::{Id, element::Element, file::FileId, module::ModuleId},
+    interpreter::{Id, element::Element, module::ModuleId},
     new_type,
-    utils::{async_lockfree_stack::Stack, moss},
+    utils::async_lockfree_stack::Stack,
 };
 
 new_type! {

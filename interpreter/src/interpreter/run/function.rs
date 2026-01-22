@@ -21,7 +21,6 @@ use crate::{
 pub struct CallContext<'a, IP> {
     interpreter: &'a mut IP,
     optimized: &'a FunctionOptimized,
-    scope_id: Id<Scope>,
     module_id: ModuleId,
     element_map: Vec<Option<Id<Element>>>,
     scope_map: Vec<Option<Id<Scope>>>,
@@ -42,7 +41,6 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         let mut ctx = CallContext {
             interpreter: ctx.ip,
             optimized,
-            scope_id: ctx.scope_id,
             module_id: ctx.module_id,
             element_map: Default::default(),
             scope_map: Default::default(),
@@ -52,34 +50,35 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
             ctx.instantiate_scope(optimized.root_scope.unwrap()),
         )))
     }
-    fn instantiate_scope(&mut self, id: Id<Scope>) -> Id<Scope> {
-        if let Some(id) = self.scope_map.get(id.0).copied().flatten() {
+    fn instantiate_scope(&mut self, scope_id: Id<Scope>) -> Id<Scope> {
+        if let Some(id) = self.scope_map.get(scope_id.to_idx()).copied().flatten() {
             return id;
         }
-        let scope = unsafe {
+        let mapped_scope = unsafe {
             erase_mut(self)
                 .interpreter
-                .add_scope(Some(self.scope_id), None, self.module_id)
+                .add_scope(None, None, self.module_id)
         };
-        let scope_id = scope.get_id();
-        let function_scope = &self.optimized.scopes[id.0];
+        let mapped_scope_id = mapped_scope.get_id();
+        let function_scope = &self.optimized.scopes[scope_id.to_idx()];
         for element in function_scope.elements.iter().copied() {
-            self.instantiate_element(scope, element);
+            self.instantiate_element(mapped_scope, element);
         }
-        if self.scope_map.len() <= id.0 {
-            self.scope_map.resize(id.0 + 1, Default::default());
+        if self.scope_map.len() <= scope_id.to_idx() {
+            self.scope_map
+                .resize(scope_id.to_idx() + 1, Default::default());
         }
-        self.scope_map[id.0] = Some(scope_id);
-        scope_id
+        self.scope_map[scope_id.to_idx()] = Some(mapped_scope_id);
+        mapped_scope_id
     }
     fn instantiate_element(&mut self, scope: &mut Scope, id: Id<Element>) -> Id<Element> {
         if id == OPTIMIZED_PARAM {
             return self.param;
         }
-        if let Some(id) = self.element_map.get(id.0).copied().flatten() {
+        if let Some(id) = self.element_map.get(id.to_idx()).copied().flatten() {
             return id;
         }
-        let function_element = &self.optimized.elements[id.0];
+        let function_element = &self.optimized.elements[id.to_idx()];
         let authored = match &function_element.authored {
             FunctionElementAuthored::Expr(expr) => ElementAuthored::Expr({
                 let mut expr = expr.clone();
@@ -100,10 +99,10 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
             .interpreter
             .add_element(function_element.key, scope, Some(authored))
             .unwrap();
-        if self.element_map.len() <= id.0 {
-            self.element_map.resize(id.0 + 1, Default::default());
+        if self.element_map.len() <= id.to_idx() {
+            self.element_map.resize(id.to_idx() + 1, Default::default());
         }
-        self.element_map[id.0] = Some(new_id);
+        self.element_map[id.to_idx()] = Some(new_id);
         new_id
     }
 }
@@ -173,7 +172,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> OptimizeContext<'a, IP> {
                 .as_mut_ptr()
                 .add(self.optimized.scopes.len())
         };
-        unsafe { self.optimized.scopes.set_len(new_id.0 + 1) };
+        unsafe { self.optimized.scopes.set_len(new_id.to_idx() + 1) };
 
         let scope = erase(self).ip.get(scope_id);
         let mut elements = vec![];
@@ -208,7 +207,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> OptimizeContext<'a, IP> {
                 .as_mut_ptr()
                 .add(self.optimized.elements.len())
         };
-        unsafe { self.optimized.elements.set_len(new_id.0 + 1) };
+        unsafe { self.optimized.elements.set_len(new_id.to_idx() + 1) };
 
         let function_element = FunctionElement {
             authored: {

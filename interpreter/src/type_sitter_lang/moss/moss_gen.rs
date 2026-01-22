@@ -1537,7 +1537,7 @@ pub mod anon_unions {
     {
         type WithLifetime<'a> =
             Bracket_Call_Find_FindMeta_Function_Int_Meta_Name_Scope_Set_String_Trivial<'a>;
-        const KIND : & 'static str = "{bracket | call | find | find_meta | function | int | meta | name | scope | set | string | trivial}" ;
+        const KIND: &'static str = "{bracket | call | find | find_meta | function | int | meta | name | scope | set | string | trivial}";
         #[inline]
         fn try_from_raw(
             node: ::type_sitter::raw::Node<'tree>,

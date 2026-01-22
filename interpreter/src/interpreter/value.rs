@@ -1,12 +1,11 @@
 use enum_extract_macro::EnumExtract;
-use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{
         Id,
         element::{self, ElementKey},
         function,
-        scope::{self, ScopeSource},
+        scope::{self},
     },
     utils::contexted::{Contexted, WithContext},
 };
@@ -15,10 +14,7 @@ use std::{
     ops::Deref,
 };
 
-use crate::{
-    interpreter::InterpreterLike,
-    utils::{concurrent_string_interner::StringId, moss},
-};
+use crate::{interpreter::InterpreterLike, utils::concurrent_string_interner::StringId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinFunction {
@@ -27,7 +23,7 @@ pub enum BuiltinFunction {
 }
 impl fmt::Display for BuiltinFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "~");
+        write!(f, "~")?;
         match self {
             BuiltinFunction::Mod => write!(f, "mod"),
             BuiltinFunction::Diagnose => write!(f, "diagnose"),
@@ -75,7 +71,10 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Scope, Ctx> {
                 f,
                 "{} = {}; ",
                 self.ctx.id2str(*key).deref(),
-                self.ctx.get_element_value(*element).unwrap_or(Value::Error(Error)).with_ctx(self.ctx)
+                self.ctx
+                    .get_element_value(*element)
+                    .unwrap_or(Value::Error(Error))
+                    .with_ctx(self.ctx)
             )?;
         }
         write!(f, "}}")
@@ -195,11 +194,13 @@ impl Value {
         other: Option<Value>,
     ) -> Option<Id<function::Function>> {
         let other_function = other.map(|x| x.merge_in(ctx, None)).flatten();
-        if let Value::Param (param) = self {
+        if let Value::Param(param) = self {
             let function = ctx.get(param.0).function;
             if let Some(other_function) = other_function {
                 if other_function != function {
-                    if ctx.get(ctx.get(other_function).scope).depth > ctx.get(ctx.get(function).scope).depth {
+                    if ctx.get(ctx.get(other_function).scope).depth
+                        > ctx.get(ctx.get(function).scope).depth
+                    {
                         return Some(other_function);
                     }
                 }
@@ -218,24 +219,24 @@ macro_rules! merge_params { ($ctx:expr, $( $x:expr ),* ) => {
     )* };
 }
 
-impl<'a, Ctx: InterpreterLike + ?Sized> Display for Contexted<'a,Value, Ctx> {
+impl<'a, Ctx: InterpreterLike + ?Sized> Display for Contexted<'a, Value, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match *self.value {
-            Value::Int(value) => write!(f,"{}",value),
-            Value::IntType(value) => write!(f,"{}",value),
-            Value::String(value) => write!(f,"{}",value.with_ctx(self.ctx)),
-            Value::StringType(value) => write!(f,"{}",value),
-            Value::Scope(value) => write!(f,"{}",value.with_ctx(self.ctx)),
-            Value::ScopeType(value) => write!(f,"{}",value),
-            Value::Element(value) => write!(f,"{}",value.with_ctx(self.ctx)),
-            Value::ElementType(value) => write!(f,"{}",value),
-            Value::Function(value) => write!(f,"{}",value),
-            Value::FunctionType(value) => write!(f,"{}",value),
-            Value::TypeType(value) => write!(f,"{}",value),
-            Value::BuiltinFunction(value) => write!(f,"{}",value),
-            Value::Error(value) => write!(f,"{}",value),
-            Value::Trivial(value) => write!(f,"{}",value),
-            Value::Param(value) => write!(f,"{}",value.with_ctx(self.ctx)),
+            Value::Int(value) => write!(f, "{}", value),
+            Value::IntType(value) => write!(f, "{}", value),
+            Value::String(value) => write!(f, "{}", value.with_ctx(self.ctx)),
+            Value::StringType(value) => write!(f, "{}", value),
+            Value::Scope(value) => write!(f, "{}", value.with_ctx(self.ctx)),
+            Value::ScopeType(value) => write!(f, "{}", value),
+            Value::Element(value) => write!(f, "{}", value.with_ctx(self.ctx)),
+            Value::ElementType(value) => write!(f, "{}", value),
+            Value::Function(value) => write!(f, "{}", value),
+            Value::FunctionType(value) => write!(f, "{}", value),
+            Value::TypeType(value) => write!(f, "{}", value),
+            Value::BuiltinFunction(value) => write!(f, "{}", value),
+            Value::Error(value) => write!(f, "{}", value),
+            Value::Trivial(value) => write!(f, "{}", value),
+            Value::Param(value) => write!(f, "{}", value.with_ctx(self.ctx)),
         }
     }
 }

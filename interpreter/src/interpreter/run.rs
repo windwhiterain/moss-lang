@@ -10,7 +10,7 @@ use crate::{
         scope::Scope,
         value::{self, Value},
     },
-    utils::{erase, erase_mut},
+    utils::erase_mut,
 };
 
 mod buitin_function;

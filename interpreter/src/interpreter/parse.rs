@@ -263,9 +263,9 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
     }
     fn parse(&mut self) -> Option<Expr> {
         match self.source_child {
-            moss::ValueChild::Bracket(bracket) => unsafe {
+            moss::ValueChild::Bracket(bracket) => {
                 parse_value(self.ip, bracket.value(), self.element_id, self.scope)
-            },
+            }
             moss::ValueChild::Call(call) => self.parse_call(call),
             moss::ValueChild::Scope(scope) => self.parse_scope(scope),
             moss::ValueChild::Find(find) => self.parse_find(FindSource::Targeted(find)),

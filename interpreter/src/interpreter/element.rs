@@ -4,7 +4,7 @@ use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner, diagnose::Diagnostic, expr::Expr, file::FileId, scope::Scope, value::Value
+        Id, Managed, Owner, diagnose::Diagnostic, expr::Expr, scope::Scope, value::Value,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };

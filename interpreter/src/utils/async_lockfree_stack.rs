@@ -43,7 +43,7 @@ impl<T> Stack<T> {
         .await
     }
 
-    pub fn pop(&self)->Option<T>{
+    pub fn pop(&self) -> Option<T> {
         self.stack.pop()
     }
 }

@@ -1,4 +1,4 @@
-use std::{ops::Deref as _, path::Path};
+use std::path::Path;
 
 use type_sitter::{Node as _, UntypedNode};
 
@@ -7,25 +7,18 @@ use crate::{
         Id, InterpreterLikeMut, Location, Managed as _, SRC_FILE_EXTENSION, SRC_PATH,
         diagnose::Diagnostic,
         element::Element,
-        expr::Expr,
         function::Param,
         module::ModuleId,
-        run::buitin_function,
-        scope::Scope,
         value::{self, BuiltinFunction, Value},
     },
     merge_params,
-    utils::erase,
 };
 
 pub struct Context<'a, IP> {
     ip: &'a mut IP,
     element_id: Id<Element>,
-    scope_id: Id<Scope>,
     module_id: ModuleId,
     source: Option<UntypedNode<'static>>,
-    expr: &'a mut Expr,
-    builtin_function: BuiltinFunction,
     param: Value,
 }
 
@@ -38,11 +31,8 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let mut ctx = Self {
             ip: ctx.ip,
             element_id: ctx.element_id,
-            scope_id: ctx.scope_id,
             module_id: ctx.module_id,
             source: ctx.source,
-            expr: ctx.expr,
-            builtin_function,
             param,
         };
         match builtin_function {

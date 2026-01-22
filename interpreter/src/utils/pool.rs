@@ -51,7 +51,6 @@ impl<T> Pool<T> {
         let current_chunck = self.chuncks.get_mut(self.current_chunck_idx).unwrap();
         let raw_item = current_chunck.get_mut(self.next_idx).unwrap();
         let item = raw_item.write(value);
-        let ptr = item as *mut T;
         self.next_idx += 1;
         self.length += 1;
         item
@@ -99,8 +98,12 @@ pub trait PoolOf<T> {
 }
 
 pub trait InPool<T> {
-    fn get(pools:&T)->&Pool<Self> where Self: Sized;
-    fn get_mut(pools:&mut T)->&mut Pool<Self> where Self: Sized;
+    fn get(pools: &T) -> &Pool<Self>
+    where
+        Self: Sized;
+    fn get_mut(pools: &mut T) -> &mut Pool<Self>
+    where
+        Self: Sized;
 }
 
 #[macro_export]
@@ -143,7 +146,6 @@ macro_rules! gen_pools {
         }
     };
 }
-
 
 #[test]
 fn test() {

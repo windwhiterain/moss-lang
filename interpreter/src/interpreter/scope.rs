@@ -1,7 +1,8 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use crate::{
-    interpreter::{Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId, module::ModuleId
+    interpreter::{
+        Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId, module::ModuleId,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
@@ -22,28 +23,36 @@ pub struct Scope {
     pub depth: usize,
 }
 
-impl Managed for Scope{
+impl Managed for Scope {
     const NAME: &str = "Scope";
-    
+
     type Local = ScopeLocal;
-    
-    fn get_local(&self)->&UnsafeCell<Self::Local> {
-        & self.local
+
+    fn get_local(&self) -> &UnsafeCell<Self::Local> {
+        &self.local
     }
-    
-    fn get_local_mut(&mut self)->&mut UnsafeCell<Self::Local> {
+
+    fn get_local_mut(&mut self) -> &mut UnsafeCell<Self::Local> {
         &mut self.local
     }
-    
+
     type Onwer = Self;
-    
-    fn get_owner(&self)->super::Owner<Self::Onwer> where Self: Sized {
+
+    fn get_owner(&self) -> super::Owner<Self::Onwer>
+    where
+        Self: Sized,
+    {
         Owner::Module(self.module)
     }
 }
 
 impl Scope {
-    pub fn new(parent: Option<Id<Scope>>, authored: Option<ScopeAuthored>, module: ModuleId,depth:usize) -> Self {
+    pub fn new(
+        parent: Option<Id<Scope>>,
+        authored: Option<ScopeAuthored>,
+        module: ModuleId,
+        depth: usize,
+    ) -> Self {
         Self {
             elements: Default::default(),
             parent,
@@ -53,7 +62,7 @@ impl Scope {
                 children: Default::default(),
                 diagnoistics: Default::default(),
             }),
-            depth
+            depth,
         }
     }
     pub fn get_file(&self) -> Option<FileId> {

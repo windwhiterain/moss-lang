@@ -1,6 +1,6 @@
 use type_sitter::UntypedNode;
 
-use crate::{interpreter::{value::Value}, utils::concurrent_string_interner::StringId};
+use crate::{interpreter::value::Value, utils::concurrent_string_interner::StringId};
 
 #[derive(Clone, Debug)]
 pub enum Diagnostic {
@@ -30,8 +30,8 @@ pub enum Diagnostic {
     StringEscapeError {
         source: UntypedNode<'static>,
     },
-    Custom{
+    Custom {
         source: UntypedNode<'static>,
-        text: StringId
-    }
+        text: StringId,
+    },
 }

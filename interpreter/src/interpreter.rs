@@ -3,21 +3,12 @@ use crate::interpreter::diagnose::Diagnostic;
 use crate::interpreter::element::Dependant;
 use crate::interpreter::element::Element;
 use crate::interpreter::element::ElementAuthored;
-use crate::interpreter::element::ElementDescriptor;
 use crate::interpreter::element::ElementKey;
-use crate::interpreter::element::ElementLocal;
 use crate::interpreter::element::ElementSource;
 use crate::interpreter::expr::Expr;
 use crate::interpreter::expr::HasRef as _;
 use crate::interpreter::file::File;
 use crate::interpreter::file::FileId;
-use crate::interpreter::function::Function;
-use crate::interpreter::function::FunctionElement;
-use crate::interpreter::function::FunctionElementAuthored;
-use crate::interpreter::function::FunctionOptimized;
-use crate::interpreter::function::FunctionScope;
-use crate::interpreter::function::OPTIMIZED_PARAM;
-use crate::interpreter::function::Param;
 use crate::interpreter::module::Module;
 use crate::interpreter::module::ModuleId;
 use crate::interpreter::module::ModuleLocal;
@@ -25,7 +16,6 @@ use crate::interpreter::module::Pools;
 use crate::interpreter::parse::parse_value;
 use crate::interpreter::scope::Scope;
 use crate::interpreter::scope::ScopeAuthored;
-use crate::interpreter::scope::ScopeLocal;
 use crate::interpreter::scope::ScopeSource;
 use crate::interpreter::thread::Depend;
 use crate::interpreter::thread::Signal;
@@ -35,7 +25,6 @@ use crate::interpreter::thread::ThreadLocal;
 use crate::interpreter::thread::ThreadRemote;
 use crate::interpreter::value::BuiltinFunction;
 use crate::interpreter::value::Value;
-use crate::merge_params;
 use crate::utils::concurrent_string_interner::ConcurentInterner;
 use crate::utils::concurrent_string_interner::StringId;
 use crate::utils::erase;
@@ -46,15 +35,9 @@ use crate::utils::unsafe_cell::UnsafeCell;
 use slotmap::SecondaryMap;
 use slotmap::SlotMap;
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fmt::Debug;
-use std::fmt::Display;
 use std::hash::Hash;
-use std::iter;
-use std::marker::PhantomData;
 use std::mem;
-use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
@@ -71,7 +54,7 @@ pub use type_sitter::Node;
 use type_sitter::NodeResult;
 pub use type_sitter::UntypedNode;
 pub type Tree = type_sitter::Tree<moss::SourceFile<'static>>;
-use crate::utils::type_key::Vec as KeyVec;
+use crate::utils::typed_key::Vec as KeyVec;
 
 pub mod diagnose;
 pub mod element;
@@ -89,14 +72,23 @@ mod run;
 pub const SRC_FILE_EXTENSION: &str = "moss";
 pub const SRC_PATH: &str = "src";
 
-pub struct Id<T>(pub usize, PhantomData<T>);
+pub struct Id<T>(*mut T);
+
+unsafe impl<T> Send for Id<T> {}
 
 impl<T> Id<T> {
+    pub const ANY: Self = Self::from_idx(0);
     pub const fn from_idx(idx: usize) -> Self {
-        Self(idx, Default::default())
+        Self(idx as *mut T)
     }
     pub fn from_ptr(ptr: *const T) -> Self {
-        Self(ptr as usize, Default::default())
+        Self(ptr as *mut T)
+    }
+    pub fn to_idx(self) -> usize {
+        self.0 as usize
+    }
+    pub fn to_ptr(self) -> *mut T {
+        self.0
     }
 }
 
@@ -133,7 +125,7 @@ where
 
 impl<T> Clone for Id<T> {
     fn clone(&self) -> Self {
-        Self(self.0.clone(), Default::default())
+        Self(self.0.clone())
     }
 }
 
@@ -213,7 +205,8 @@ impl Interpreter {
             Some(ElementAuthored::Value(Value::BuiltinFunction(
                 BuiltinFunction::Mod,
             ))),
-        );
+        )
+        .unwrap();
         let diagnose_id = self.str2id("diagnose");
         self.add_element(
             ElementKey::Name(diagnose_id),
@@ -221,7 +214,8 @@ impl Interpreter {
             Some(ElementAuthored::Value(Value::BuiltinFunction(
                 BuiltinFunction::Diagnose,
             ))),
-        );
+        )
+        .unwrap();
         self.set_element_value(
             self.get_module(module).root_scope.unwrap(),
             Value::Scope(value::Scope(scope.get_id())),
@@ -492,7 +486,7 @@ pub trait InterpreterLike: Sized {
     }
 
     fn get<T>(&self, id: Id<T>) -> &T {
-        unsafe { &*(self as *const Self as *const T).with_addr(id.0) }
+        unsafe { &*(id.to_ptr()) }
     }
     /// # Safety
     /// `id` is not remote.
@@ -690,7 +684,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
     /// - not concurrent.
     unsafe fn get_mut<T>(&mut self, id: Id<T>) -> &mut T {
         debug_assert!(!self.is_concurrent());
-        unsafe { &mut *(id.0 as *mut T) }
+        unsafe { &mut *(id.to_idx() as *mut T) }
     }
     unsafe fn add<T: InPool<Pools>>(&mut self, value: T, module_id: ModuleId) -> &mut T {
         let pool = T::get_mut(&mut unsafe { self.get_module_local_mut(module_id) }.pools);
@@ -801,7 +795,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             fn add(&mut self) -> Option<&mut Element> {
                 match self.key {
                     ElementKey::Name(name) => match erase_mut(self).scope.elements.entry(name) {
-                        std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                        std::collections::hash_map::Entry::Occupied(_occupied_entry) => {
                             if let Some(authored) = &self.authored {
                                 if let ElementAuthored::Source(source) = authored {
                                     let source = if let Some(key_source) = source.key_source {
