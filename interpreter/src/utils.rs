@@ -25,6 +25,7 @@ pub mod pool;
 pub mod spmr_vec;
 pub mod type_key;
 pub mod unsafe_cell;
+pub mod contexted;
 
 pub fn new_uninit_cell_slice<T>(capacity: usize) -> Box<[UnsafeCell<MaybeUninit<T>>]> {
     let mut boxed = Box::<[MaybeUninit<T>]>::new_uninit_slice(capacity);

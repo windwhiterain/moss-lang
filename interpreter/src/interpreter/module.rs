@@ -1,4 +1,4 @@
-use crate::{gen_pools, interpreter::{Id, function::Function}, utils::pool::Pool};
+use crate::{gen_pools, interpreter::{Id, function::{Function, Param}}, utils::pool::Pool};
 use slotmap::new_key_type;
 use std::{cell::UnsafeCell, fmt::Debug, sync::OnceLock};
 
@@ -9,7 +9,7 @@ use crate::interpreter::{
 
 gen_pools! {
     #[derive(Debug)]
-    pub Pools{scopes:Scope,elements:Element,functions:Function}
+    pub Pools{scopes:Scope,elements:Element,functions:Function,params:Param}
 }
 
 #[derive(Debug)]

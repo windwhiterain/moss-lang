@@ -2,11 +2,7 @@
 
 use crate::{
     interpreter::{
-        Id, Managed,
-        element::{Element, ElementKey},
-        module::ModuleId,
-        scope::Scope,
-        value::{Expr, Value},
+        Id, Managed, element::{Element, ElementKey}, expr::Expr, module::ModuleId, scope::Scope, value::Value
     }, utils::{concurrent_string_interner::StringId, unsafe_cell::UnsafeCell},
 };
 
@@ -34,7 +30,7 @@ pub struct FunctionOptimized {
     pub root_scope: Option<Id<Scope>>,
 }
 
-pub const IN_OPTIMIZED: Id<Element> = Id::from_idx(usize::MAX);
+pub const OPTIMIZED_PARAM: Id<Element> = Id::from_idx(usize::MAX);
 
 #[derive(Debug)]
 pub struct Function {
@@ -86,5 +82,40 @@ impl Managed for Function {
         Self: Sized,
     {
         super::Owner::Module(self.module)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParamType {
+    pub value: Value,
+    pub depth: usize,
+}
+
+#[derive(Debug)]
+pub struct Param{
+    pub function: Id<Function>,
+    pub r#type: Option<ParamType>,
+}
+
+impl Managed for Param {
+    type Local = ();
+
+    type Onwer = Function;
+
+    const NAME: &str = "Param";
+
+    fn get_local(&self) -> &UnsafeCell<Self::Local> {
+        unimplemented!()
+    }
+
+    fn get_local_mut(&mut self) -> &mut UnsafeCell<Self::Local> {
+        unimplemented!()
+    }
+
+    fn get_owner(&self) -> super::Owner<Self::Onwer>
+    where
+        Self: Sized,
+    {
+        super::Owner::Managed(self.function)
     }
 }

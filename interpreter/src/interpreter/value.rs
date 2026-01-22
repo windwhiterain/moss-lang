@@ -1,8 +1,14 @@
 use enum_extract_macro::EnumExtract;
 use type_sitter::UntypedNode;
 
-use crate::interpreter::{
-    Id, element::{Element, ElementKey}, function::Function, scope::{Scope, ScopeSource}
+use crate::{
+    interpreter::{
+        Id,
+        element::{self, ElementKey},
+        function,
+        scope::{self, ScopeSource},
+    },
+    utils::contexted::{Contexted, WithContext},
 };
 use std::{
     fmt::{self, Debug, Display, Formatter},
@@ -14,243 +20,222 @@ use crate::{
     utils::{concurrent_string_interner::StringId, moss},
 };
 
-#[derive(Clone, Copy, Debug)]
-pub enum Builtin {
-    If,
-    Add,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinFunction {
     Mod,
     Diagnose,
 }
-impl fmt::Display for Builtin {
+impl fmt::Display for BuiltinFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "~");
         match self {
-            Builtin::If => write!(f, "if"),
-            Builtin::Add => write!(f, "add"),
-            Builtin::Mod => write!(f, "mod"),
-            Builtin::Diagnose => write!(f, "diagnose"),
+            BuiltinFunction::Mod => write!(f, "mod"),
+            BuiltinFunction::Diagnose => write!(f, "diagnose"),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, EnumExtract)]
-pub enum StaticValue {
-    Int(i64),
-    IntTy,
-    String(StringId),
-    StringTy,
-    Scope(Id<Scope>),
-    ScopeTy,
-    TyTy,
-    Builtin(Builtin),
-    Element(Id<Element>),
-    ElementTy,
-    Function(Id<Function>),
-    FunctionTy,
-    FunctionOptimized(Id<Function>),
-    Err,
-    Trivial,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Int(pub i64);
+
+impl Display for Int {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntType;
+impl Display for IntType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Int")
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct String(pub StringId);
+impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, String, Ctx> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "\"{}\"", &*self.ctx.id2str(self.value.0))
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StringType;
+impl Display for StringType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "String")
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scope(pub Id<scope::Scope>);
+impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Scope, Ctx> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let scope = self.ctx.get(self.value.0);
+        write!(f, "{{")?;
+        for (key, element) in scope.elements.iter() {
+            write!(
+                f,
+                "{} = {}; ",
+                self.ctx.id2str(*key).deref(),
+                self.ctx.get_element_value(*element).unwrap_or(Value::Error(Error)).with_ctx(self.ctx)
+            )?;
+        }
+        write!(f, "}}")
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeType;
+impl Display for ScopeType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Scope")
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Element(pub Id<element::Element>);
+impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Element, Ctx> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "@{}",
+            {
+                let element = self.ctx.get(self.value.0);
+                let ElementKey::Name(name) = element.key else {
+                    unreachable!()
+                };
+                self.ctx.id2str(name)
+            }
+            .deref()
+        )
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ElementType;
+impl Display for ElementType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Element")
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Function(pub Id<function::Function>);
+impl Display for Function {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "->{{}}")
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FunctionType;
+impl Display for FunctionType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Function")
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypeType;
+impl Display for TypeType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Type")
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Trivial;
+impl Display for Trivial {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "()")
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Error;
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "?")
+    }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct Type {
-    pub value: StaticValue,
-    pub depth: usize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Param(pub Id<function::Param>);
+impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Param, Ctx> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let param = self.ctx.get(self.value.0);
+        let function = self.ctx.get(param.function);
+        let scope = self.ctx.get(function.scope);
+        write!(f, "Param{{depth: {}}}", scope.depth)?;
+        if let Some(r#type) = param.r#type {
+            write!(f, ":")?;
+            if r#type.depth > 0 {
+                write!(f, "^{}", r#type.depth)?;
+            }
+            write!(f, " ")?;
+            write!(f, ": {}", r#type.value.with_ctx(self.ctx))?;
+        }
+        Ok(())
+    }
 }
 
-#[derive(Clone, Copy, Debug, EnumExtract)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumExtract)]
 pub enum Value {
-    Static(StaticValue),
-    In {
-        scope: Id<Scope>,
-        r#type: Option<Type>,
-    },
+    Int(Int),
+    IntType(IntType),
+    String(String),
+    StringType(StringType),
+    Scope(Scope),
+    ScopeType(ScopeType),
+    Element(Element),
+    ElementType(ElementType),
+    Function(Function),
+    FunctionType(FunctionType),
+    TypeType(TypeType),
+    BuiltinFunction(BuiltinFunction),
+    Error(Error),
+    Trivial(Trivial),
+    Param(Param),
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum Expr {
-    Ref{
-        element:Id<Element>,
-        source: UntypedNode<'static>,
-    },
-    Find {
-        name: StringId,
-        source: moss::Name<'static>,
-    },
-    FindIn {
-        value: Id<Element>,
-        key: StringId,
-        key_source: moss::Name<'static>,
-        source: moss::Find<'static>,
-    },
-    Call {
-        func: Id<Element>,
-        param: Id<Element>,
-        source: moss::Call<'static>,
-    },
-    MetaFind {
-        name: StringId,
-        source: moss::Meta<'static>,
-    },
-    MetaFindIn {
-        value: Id<Element>,
-        key: StringId,
-        key_source: moss::Name<'static>,
-        source: moss::Find<'static>,
-    },
-    FunctionOptimized(Id<Function>),
-    Value(StaticValue),
-}
-
-impl Expr{
-    pub fn map_ref(mut self,mut map:impl FnMut(Id<Element>)->Id<Element>)->Self{
-        match &mut self {
-            Expr::Ref { element, source } => {
-                *element = map(*element);
-            },
-            Expr::FindIn { value, key, key_source, source } => {
-                *value = map(*value);
-            },
-            Expr::Call { func, param, source } => {
-                *func = map(*func);
-                *param = map(*param);
-            },
-            Expr::MetaFindIn { value, key, key_source, source } => {
-                *value = map(*value);
-            },
-            _=>(),
-        }
-        self
-    }
-    pub fn iter_ref(self,mut map:impl FnMut(Id<Element>))->Self{
-        match self {
-            Expr::Ref { element, source } => {
-                map(element);
-            },
-            Expr::FindIn { value, key, key_source, source } => {
-                map(value);
-            },
-            Expr::Call { func, param, source } => {
-                map(func);
-                map(param);
-            },
-            Expr::MetaFindIn { value, key, key_source, source } => {
-                map(value);
-            },
-            _=>(),
-        }
-        self
-    }
-}
-
-impl StaticValue {
-    pub fn with_ctx<'a, Ctx: InterpreterLike+?Sized>(
-        &'a self,
-        ctx: &'a Ctx,
-    ) -> ContextedStaticValue<'a, Ctx> {
-        ContextedStaticValue {
-            value: self,
-            ctx: ctx,
-        }
-    }
-}
 impl Value {
     pub fn merge_in(
         self,
         ctx: &(impl InterpreterLike + ?Sized),
         other: Option<Value>,
-    ) -> Option<Id<Scope>> {
-        let other_scope = other.map(|x| x.merge_in(ctx, None)).flatten();
-        if let Value::In { scope, .. } = self {
-            if let Some(other_scope) = other_scope {
-                if other_scope != scope {
-                    if ctx.get(other_scope).depth > ctx.get(scope).depth {
-                        return Some(other_scope);
+    ) -> Option<Id<function::Function>> {
+        let other_function = other.map(|x| x.merge_in(ctx, None)).flatten();
+        if let Value::Param (param) = self {
+            let function = ctx.get(param.0).function;
+            if let Some(other_function) = other_function {
+                if other_function != function {
+                    if ctx.get(ctx.get(other_function).scope).depth > ctx.get(ctx.get(function).scope).depth {
+                        return Some(other_function);
                     }
                 }
             }
-            Some(scope)
+            Some(function)
         } else {
-            other_scope
+            other_function
         }
-    }
-}
-
-impl Value {
-    pub fn with_ctx<'a, Ctx:?Sized>(&'a self, ctx: &'a Ctx) -> ContextedValue<'a, Ctx> {
-        ContextedValue { value: self, ctx }
     }
 }
 
 #[macro_export]
-macro_rules! merge_in { ($ctx:expr, $( $x:expr ),* ) => {
-    $crate::interpreter::value::Value::Static($crate::interpreter::value::StaticValue::Trivial)$(.merge_in(
+macro_rules! merge_params { ($ctx:expr, $( $x:expr ),* ) => {
+    $crate::interpreter::value::Value::Trivial($crate::interpreter::value::Trivial)$(.merge_in(
         $ctx,Some($x))
     )* };
 }
 
-pub struct ContextedStaticValue<'a, Ctx: InterpreterLike + ?Sized> {
-    pub value: &'a StaticValue,
-    pub ctx: &'a Ctx,
-}
-
-impl<'a, Ctx: InterpreterLike+?Sized> Display for ContextedStaticValue<'a, Ctx> {
+impl<'a, Ctx: InterpreterLike + ?Sized> Display for Contexted<'a,Value, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match *self.value {
-            StaticValue::Int(x) => write!(f, "{x}"),
-            StaticValue::IntTy => write!(f, "Int"),
-            StaticValue::Scope(scope_id) => {
-                write!(f, "{}", scope_id.with_ctx(self.ctx))
-            }
-            StaticValue::ScopeTy => write!(f, "Scope"),
-            StaticValue::TyTy => write!(f, "Type"),
-            StaticValue::Builtin(builtin) => write!(f, "~{}", builtin),
-            StaticValue::Err => write!(f, "Err"),
-            StaticValue::String(string) => {
-                write!(f, "\"{}\"", self.ctx.id2str(string).deref())
-            }
-            StaticValue::StringTy => write!(f, "String"),
-            StaticValue::Element(element_id) => write!(
-                f,
-                "@{}",
-                {
-                    let element = self.ctx.get(element_id);
-                    let ElementKey::Name(name) = element.key else {
-                        unreachable!()
-                    };
-                    self.ctx.id2str(name)
-                }
-                .deref()
-            ),
-            StaticValue::ElementTy => write!(f, "Element"),
-            StaticValue::Trivial => write!(f, "()"),
-            StaticValue::Function(id) => write!(f,"->{{}}"),
-            StaticValue::FunctionTy => write!(f,"Function"),
-            StaticValue::FunctionOptimized(id) => write!(f,"->{{}}*"),
-        }
-    }
-}
-
-pub struct ContextedValue<'a, Ctx:?Sized> {
-    pub value: &'a Value,
-    pub ctx: &'a Ctx,
-}
-
-impl<'a, Ctx: InterpreterLike+?Sized> Display for ContextedValue<'a, Ctx> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match *self.value {
-            Value::Static(static_value) => static_value.with_ctx(self.ctx).fmt(f),
-            Value::In { scope, r#type } => {
-                write!(f, "In{{depth: {}}}", self.ctx.get(scope).depth)?;
-                if let Some(r#type) = r#type {
-                    write!(f, ":")?;
-                    if r#type.depth > 0 {
-                        write!(f, "^{}", r#type.depth)?;
-                    }
-                    write!(f, " ")?;
-                    write!(f, ": {}", r#type.value.with_ctx(self.ctx))?;
-                }
-                Ok(())
-            }
+            Value::Int(value) => write!(f,"{}",value),
+            Value::IntType(value) => write!(f,"{}",value),
+            Value::String(value) => write!(f,"{}",value.with_ctx(self.ctx)),
+            Value::StringType(value) => write!(f,"{}",value),
+            Value::Scope(value) => write!(f,"{}",value.with_ctx(self.ctx)),
+            Value::ScopeType(value) => write!(f,"{}",value),
+            Value::Element(value) => write!(f,"{}",value.with_ctx(self.ctx)),
+            Value::ElementType(value) => write!(f,"{}",value),
+            Value::Function(value) => write!(f,"{}",value),
+            Value::FunctionType(value) => write!(f,"{}",value),
+            Value::TypeType(value) => write!(f,"{}",value),
+            Value::BuiltinFunction(value) => write!(f,"{}",value),
+            Value::Error(value) => write!(f,"{}",value),
+            Value::Trivial(value) => write!(f,"{}",value),
+            Value::Param(value) => write!(f,"{}",value.with_ctx(self.ctx)),
         }
     }
 }

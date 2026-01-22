@@ -98,6 +98,11 @@ pub trait PoolOf<T> {
     fn get_mut(&mut self) -> &mut Pool<T>;
 }
 
+pub trait InPool<T> {
+    fn get(pools:&T)->&Pool<Self> where Self: Sized;
+    fn get_mut(pools:&mut T)->&mut Pool<Self> where Self: Sized;
+}
+
 #[macro_export]
 macro_rules! gen_pools {
     ($(#[$outer:meta])* $vis:vis $name:ident{$($field:ident : $type:ty),*}) => {
@@ -116,6 +121,15 @@ macro_rules! gen_pools {
                     &mut self.$field
                 }
             }
+
+            impl $crate::utils::pool::InPool<$name> for $type{
+                fn get(pools:&$name)->&Pool<Self> where Self: Sized{
+                    &pools.$field
+                }
+                fn get_mut(pools:&mut $name)->&mut Pool<Self> where Self: Sized{
+                    &mut pools.$field
+                }
+            }
         )*
 
         impl $name{
@@ -129,7 +143,7 @@ macro_rules! gen_pools {
         }
     };
 }
-gen_pools! {K{a:usize}}
+
 
 #[test]
 fn test() {

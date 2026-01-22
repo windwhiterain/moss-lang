@@ -1,14 +1,10 @@
 use smallvec::SmallVec;
-use std::{ sync::OnceLock};
+use std::sync::OnceLock;
 use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner,
-        diagnose::Diagnostic,
-        file::FileId,
-        scope::Scope,
-        value::{Expr, Value},
+        Id, Managed, Owner, diagnose::Diagnostic, expr::Expr, file::FileId, scope::Scope, value::Value
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
@@ -29,8 +25,8 @@ pub struct ElementLocal {
     pub is_running: bool,
 }
 
-impl ElementLocal{
-    pub fn is_resolved(&self)->bool{
+impl ElementLocal {
+    pub fn is_resolved(&self) -> bool {
         self.value.is_some()
     }
 }
@@ -72,7 +68,7 @@ impl Element {
             key,
             value: Default::default(),
             scope,
-            source:None,
+            source: None,
             local: UnsafeCell::new(ElementLocal {
                 expr: None,
                 value: None,
@@ -91,9 +87,9 @@ pub struct ElementSource {
     pub key_source: Option<moss::Name<'static>>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ElementAuthored {
-    Source { source: ElementSource, file: FileId },
+    Source(ElementSource),
     Expr(Expr),
     Value(Value),
 }

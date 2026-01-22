@@ -20,9 +20,9 @@ use tower_lsp::{
 
 use moss_interpreter::{
     interpreter::{
-        Id, Interpreter, InterpreterLike, Node, SRC_FILE_EXTENSION, UntypedNode, diagnose::Diagnostic, file::FileId, scope::Scope, value::{ContextedStaticValue, StaticValue, Value}
+        Id, Interpreter, InterpreterLike, Node, SRC_FILE_EXTENSION, UntypedNode, diagnose::Diagnostic, file::FileId, scope::Scope, value::{self, Value}
     },
-    utils::erase_mut,
+    utils::{contexted::WithContext as _, erase_mut},
 };
 use walkdir::WalkDir;
 
@@ -192,7 +192,7 @@ impl LanguageServer {
                                         "{}",
                                         element_local
                                             .value
-                                            .unwrap_or(Value::Static(StaticValue::Err))
+                                            .unwrap_or(Value::Error(value::Error))
                                             .with_ctx(self.interpreter)
                                     ),
                                     DiagnosticSeverity::HINT,
@@ -218,8 +218,8 @@ impl LanguageServer {
         let Some(module_id) = file.is_module else {
             return;
         };
-        let module = unsafe { interpreter.get_module(module_id) };
-        let scope_id = *interpreter.get_element_value(module.root_scope.unwrap()).unwrap().as_static().unwrap().as_scope().unwrap();
+        let module = interpreter.get_module(module_id);
+        let scope_id = interpreter.get_element_value(module.root_scope.unwrap()).unwrap().as_scope().unwrap().0;
 
         let mut context = Context {
             file_id,

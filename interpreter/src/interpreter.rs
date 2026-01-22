@@ -7,6 +7,8 @@ use crate::interpreter::element::ElementDescriptor;
 use crate::interpreter::element::ElementKey;
 use crate::interpreter::element::ElementLocal;
 use crate::interpreter::element::ElementSource;
+use crate::interpreter::expr::Expr;
+use crate::interpreter::expr::HasRef as _;
 use crate::interpreter::file::File;
 use crate::interpreter::file::FileId;
 use crate::interpreter::function::Function;
@@ -14,10 +16,13 @@ use crate::interpreter::function::FunctionElement;
 use crate::interpreter::function::FunctionElementAuthored;
 use crate::interpreter::function::FunctionOptimized;
 use crate::interpreter::function::FunctionScope;
-use crate::interpreter::function::IN_OPTIMIZED;
+use crate::interpreter::function::OPTIMIZED_PARAM;
+use crate::interpreter::function::Param;
 use crate::interpreter::module::Module;
 use crate::interpreter::module::ModuleId;
 use crate::interpreter::module::ModuleLocal;
+use crate::interpreter::module::Pools;
+use crate::interpreter::parse::parse_value;
 use crate::interpreter::scope::Scope;
 use crate::interpreter::scope::ScopeAuthored;
 use crate::interpreter::scope::ScopeLocal;
@@ -28,16 +33,14 @@ use crate::interpreter::thread::Thread;
 use crate::interpreter::thread::ThreadId;
 use crate::interpreter::thread::ThreadLocal;
 use crate::interpreter::thread::ThreadRemote;
-use crate::interpreter::value::Builtin;
-use crate::interpreter::value::Expr;
-use crate::interpreter::value::StaticValue;
-use crate::interpreter::value::Type;
+use crate::interpreter::value::BuiltinFunction;
 use crate::interpreter::value::Value;
-use crate::merge_in;
+use crate::merge_params;
 use crate::utils::concurrent_string_interner::ConcurentInterner;
 use crate::utils::concurrent_string_interner::StringId;
 use crate::utils::erase;
 use crate::utils::erase_mut;
+use crate::utils::pool::InPool;
 use crate::utils::secondary_linked_list::List;
 use crate::utils::unsafe_cell::UnsafeCell;
 use slotmap::SecondaryMap;
@@ -64,7 +67,6 @@ use tokio::sync::futures::Notified;
 use tokio::task::JoinSet;
 
 use crate::utils::moss;
-use type_sitter::HasChild;
 pub use type_sitter::Node;
 use type_sitter::NodeResult;
 pub use type_sitter::UntypedNode;
@@ -73,12 +75,16 @@ use crate::utils::type_key::Vec as KeyVec;
 
 pub mod diagnose;
 pub mod element;
+pub mod expr;
 pub mod file;
 pub mod function;
 pub mod module;
 pub mod scope;
 pub mod thread;
 pub mod value;
+
+mod parse;
+mod run;
 
 pub const SRC_FILE_EXTENSION: &str = "moss";
 pub const SRC_PATH: &str = "src";
@@ -91,12 +97,6 @@ impl<T> Id<T> {
     }
     pub fn from_ptr(ptr: *const T) -> Self {
         Self(ptr as usize, Default::default())
-    }
-}
-
-impl<T> Id<T> {
-    fn with_ctx<'a, Ctx: InterpreterLike + ?Sized>(self, ctx: &'a Ctx) -> ContextedId<'a, T, Ctx> {
-        ContextedId { id: self, ctx }
     }
 }
 
@@ -150,42 +150,6 @@ impl<T> Eq for Id<T> {}
 impl<T> Hash for Id<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);
-    }
-}
-
-pub struct ContextedId<'a, T, Ctx: ?Sized> {
-    id: Id<T>,
-    ctx: &'a Ctx,
-}
-
-impl<'a, Ctx: InterpreterLike + ?Sized> Display for ContextedId<'a, Element, Ctx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            if let Some(value) = self.ctx.get_element_value(self.id) {
-                value
-            } else {
-                Value::Static(StaticValue::Err)
-            }
-            .with_ctx(self.ctx)
-        )
-    }
-}
-
-impl<'a, Ctx: InterpreterLike + ?Sized> Display for ContextedId<'a, Scope, Ctx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let scope = self.ctx.get(self.id);
-        write!(f, "{{")?;
-        for (key, element) in &scope.elements {
-            write!(
-                f,
-                "{} = {}; ",
-                self.ctx.id2str(*key).deref(),
-                element.with_ctx(self.ctx)
-            )?;
-        }
-        write!(f, "}}")
     }
 }
 
@@ -246,21 +210,21 @@ impl Interpreter {
         self.add_element(
             ElementKey::Name(mod_id),
             scope,
-            Some(ElementAuthored::Value(Value::Static(StaticValue::Builtin(
-                Builtin::Mod,
-            )))),
+            Some(ElementAuthored::Value(Value::BuiltinFunction(
+                BuiltinFunction::Mod,
+            ))),
         );
         let diagnose_id = self.str2id("diagnose");
         self.add_element(
             ElementKey::Name(diagnose_id),
             scope,
-            Some(ElementAuthored::Value(Value::Static(StaticValue::Builtin(
-                Builtin::Diagnose,
-            )))),
+            Some(ElementAuthored::Value(Value::BuiltinFunction(
+                BuiltinFunction::Diagnose,
+            ))),
         );
         self.set_element_value(
             self.get_module(module).root_scope.unwrap(),
-            Value::Static(StaticValue::Scope(scope.get_id())),
+            Value::Scope(value::Scope(scope.get_id())),
         );
         self.builtin_module = Some(module);
     }
@@ -479,7 +443,7 @@ pub enum Location {
     Element(Id<Element>),
     Scope(Id<Scope>),
 }
-pub trait InterpreterLike {
+pub trait InterpreterLike: Sized {
     fn is_concurrent(&self) -> bool;
     fn is_local_module(&self, id: ModuleId) -> bool;
     fn is_remote_module(&self, id: ModuleId) -> bool;
@@ -528,7 +492,7 @@ pub trait InterpreterLike {
     }
 
     fn get<T>(&self, id: Id<T>) -> &T {
-        unsafe { &*(id.0 as *const T) }
+        unsafe { &*(self as *const Self as *const T).with_addr(id.0) }
     }
     /// # Safety
     /// `id` is not remote.
@@ -573,13 +537,11 @@ pub trait InterpreterLike {
         } else {
             let builtin_module = self.get_builtin_module();
             let scope = self.get::<Scope>(
-                *self
-                    .get_element_value(self.get_module(builtin_module).root_scope.unwrap())
-                    .unwrap()
-                    .as_static()
+                self.get_element_value(self.get_module(builtin_module).root_scope.unwrap())
                     .unwrap()
                     .as_scope()
-                    .unwrap(),
+                    .unwrap()
+                    .0,
             );
             if let Some(id) = scope.elements.get(&key).copied() {
                 Some(id)
@@ -625,9 +587,11 @@ pub trait InterpreterLike {
                 }
 
                 let expr = if !(self.if_terminate)(self.ctx, element_id)
-                    && let Some(expr) = unsafe { self.interpreter.get_local(element_id) }.expr
+                    && let Some(expr) = &unsafe { self.interpreter.get_local(element_id) }.expr
                 {
-                    Some(expr.map_ref(|x| self.traverse(x)))
+                    let mut expr = expr.clone();
+                    expr.map_ref(|x| self.traverse(x));
+                    Some(expr)
                 } else {
                     None
                 };
@@ -673,7 +637,7 @@ pub trait InterpreterLike {
                 }
 
                 if !(self.if_terminate)(self.ctx, element_id)
-                    && let Some(expr) = unsafe { self.interpreter.get_local(element_id) }.expr
+                    && let Some(expr) = &unsafe { self.interpreter.get_local(element_id) }.expr
                 {
                     expr.iter_ref(|x| self.traverse(x));
                 }
@@ -727,6 +691,10 @@ pub trait InterpreterLikeMut: InterpreterLike {
     unsafe fn get_mut<T>(&mut self, id: Id<T>) -> &mut T {
         debug_assert!(!self.is_concurrent());
         unsafe { &mut *(id.0 as *mut T) }
+    }
+    unsafe fn add<T: InPool<Pools>>(&mut self, value: T, module_id: ModuleId) -> &mut T {
+        let pool = T::get_mut(&mut unsafe { self.get_module_local_mut(module_id) }.pools);
+        pool.insert(value)
     }
     /// # Safety
     /// - parent must be in local thread.
@@ -794,13 +762,10 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 };
 
                 let name = self.get_source_str_id(&key, authored.file);
-                let element_authored = ElementAuthored::Source {
-                    source: ElementSource {
-                        value_source: erase_struct!(value),
-                        key_source: Some(erase_struct!(key)),
-                    },
-                    file: authored.file,
-                };
+                let element_authored = ElementAuthored::Source(ElementSource {
+                    value_source: erase_struct!(value),
+                    key_source: Some(erase_struct!(key)),
+                });
                 let _ = self.add_element(ElementKey::Name(name), scope, Some(element_authored));
             }
         }
@@ -837,8 +802,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 match self.key {
                     ElementKey::Name(name) => match erase_mut(self).scope.elements.entry(name) {
                         std::collections::hash_map::Entry::Occupied(occupied_entry) => {
-                            if let Some(authored) = self.authored {
-                                if let ElementAuthored::Source { source, file } = authored {
+                            if let Some(authored) = &self.authored {
+                                if let ElementAuthored::Source(source) = authored {
                                     let source = if let Some(key_source) = source.key_source {
                                         key_source.upcast()
                                     } else {
@@ -866,12 +831,12 @@ pub trait InterpreterLikeMut: InterpreterLike {
         }
         let element = erase_mut(ctx.add().ok_or(())?);
         'unresolve: {
-            if let Some(authored) = authored {
+            if let Some(authored) = ctx.authored {
                 match authored {
-                    ElementAuthored::Source { source, file } => {
+                    ElementAuthored::Source(source) => {
                         element.source = Some(source);
                         let expr = unsafe {
-                            self.parse_value(Ok(source.value_source), element.get_id(), scope, file)
+                            self.parse_value(Ok(source.value_source), element.get_id(), scope)
                         };
                         let element_local = element.local.get_mut();
                         element_local.expr = expr;
@@ -902,208 +867,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
         &mut self,
         source: NodeResult<'static, moss::Value<'static>>,
         element_id: Id<Element>,
-        parent: &mut Scope,
-        file_id: FileId,
+        scope: &mut Scope,
     ) -> Option<Expr> {
-        let source = unsafe { self.grammar_error(Location::Element(element_id), source) }?;
-        let source_child =
-            unsafe { self.grammar_error(Location::Element(element_id), source.child()) }?;
-        let element = self.get::<Element>(element_id);
-        let scope_id = element.scope;
-        debug_assert!(scope_id == parent.get_id());
-        let expr = match source_child {
-            moss::ValueChild::Bracket(bracket) => unsafe {
-                self.parse_value(bracket.value(), element_id, parent, file_id)?
-            },
-            moss::ValueChild::Call(call) => {
-                let func =
-                    unsafe { self.grammar_error(Location::Element(element_id), call.func()) }?;
-                let param =
-                    unsafe { self.grammar_error(Location::Element(element_id), call.param()) }?;
-                let func_element = self
-                    .add_element(
-                        ElementKey::Temp,
-                        parent,
-                        Some(ElementAuthored::Source {
-                            source: ElementSource {
-                                value_source: func,
-                                key_source: None,
-                            },
-                            file: file_id,
-                        }),
-                    )
-                    .unwrap();
-                let param_element = self
-                    .add_element(
-                        ElementKey::Temp,
-                        parent,
-                        Some(ElementAuthored::Source {
-                            source: ElementSource {
-                                value_source: param,
-                                key_source: None,
-                            },
-                            file: file_id,
-                        }),
-                    )
-                    .unwrap();
-                Expr::Call {
-                    func: func_element,
-                    param: param_element,
-                    source: call,
-                }
-            }
-            moss::ValueChild::Scope(scope_source) => Expr::Value(StaticValue::Scope(unsafe {
-                // SAFETY: element -> scope
-                self.add_scope(
-                    Some(scope_id),
-                    Some(ScopeAuthored {
-                        source: ScopeSource::Scope(scope_source),
-                        file: file_id,
-                    }),
-                    parent.module,
-                )
-                .get_id()
-            })),
-            moss::ValueChild::Find(find) => {
-                let value =
-                    unsafe { self.grammar_error(Location::Element(element_id), find.value()) }?;
-                let name =
-                    unsafe { self.grammar_error(Location::Element(element_id), find.name()) }?;
-                let element = self
-                    .add_element(
-                        ElementKey::Temp,
-                        parent,
-                        Some(ElementAuthored::Source {
-                            source: ElementSource {
-                                value_source: value,
-                                key_source: None,
-                            },
-                            file: file_id,
-                        }),
-                    )
-                    .unwrap();
-                Expr::FindIn {
-                    value: element,
-                    key: self.get_source_str_id(&name, file_id),
-                    key_source: name,
-                    source: find,
-                }
-            }
-            moss::ValueChild::Int(int) => Expr::Value(StaticValue::Int(
-                self.get_source_str(&int, file_id).parse().unwrap(),
-            )),
-            moss::ValueChild::Name(name) => {
-                let string_id = self.get_source_str_id(&name, file_id);
-                Expr::Find {
-                    name: string_id,
-                    source: name,
-                }
-            }
-            moss::ValueChild::String(string) => {
-                let mut cursor = erase_struct!(self.get_file(file_id).tree.walk());
-                let mut value: Option<Cow<str>> = None;
-                for content in string.contents(erase_mut(&mut cursor)) {
-                    let content =
-                        erase_mut(self).grammar_error(Location::Element(element_id), content)?;
-                    let content_value = match erase_mut(self)
-                        .grammar_error(Location::Element(element_id), content.child())?
-                    {
-                        moss::StringContentChild::StringEscape(string_escape) => {
-                            match erase(self).get_source_str(&string_escape, file_id) {
-                                "\\\"" => Some("\""),
-                                "\\\\" => Some("\\"),
-                                "\\n" => Some("\n"),
-                                "\\t" => Some("\t"),
-                                "\\r" => Some("\r"),
-                                "\\{" => Some("{"),
-                                "\\}" => Some("}"),
-                                _ => {
-                                    unsafe {
-                                        erase_mut(self).diagnose(
-                                            Location::Element(element_id),
-                                            Diagnostic::StringEscapeError {
-                                                source: string_escape.upcast(),
-                                            },
-                                        )
-                                    };
-                                    None
-                                }
-                            }
-                        }
-                        moss::StringContentChild::StringRaw(string_raw) => {
-                            Some(erase(self).get_source_str(&string_raw, file_id))
-                        }
-                    }?;
-                    if let Some(value) = &mut value {
-                        value.to_mut().push_str(content_value);
-                    } else {
-                        value = Some(Cow::Borrowed(content_value))
-                    }
-                }
-
-                Expr::Value(StaticValue::String(
-                    self.str2id(value.as_ref().map(|x| x.as_ref()).unwrap_or("")),
-                ))
-            }
-            moss::ValueChild::Meta(meta) => {
-                let name = self.grammar_error(Location::Element(element_id), meta.name())?;
-                let string_id = self.get_source_str_id(&name, file_id);
-                Expr::MetaFind {
-                    name: string_id,
-                    source: meta,
-                }
-            }
-            moss::ValueChild::Function(function) => {
-                let r#in = self.grammar_error(Location::Element(element_id), function.in_())?;
-                let r#in = self.get_source_str_id(&r#in, file_id);
-                let scope = self.grammar_error(Location::Element(element_id), function.scope())?;
-                let scope = unsafe {
-                    // SAFETY: element -> scope
-                    erase_mut(self).add_scope(
-                        Some(scope_id),
-                        Some(ScopeAuthored {
-                            source: ScopeSource::Scope(scope),
-                            file: file_id,
-                        }),
-                        parent.module,
-                    )
-                };
-                let r#in = self
-                    .add_element(
-                        ElementKey::Name(r#in),
-                        scope,
-                        Some(ElementAuthored::Value(Value::In {
-                            scope: scope.get_id(),
-                            r#type: None,
-                        })),
-                    )
-                    .ok()?;
-
-                let function = erase_mut(self)
-                    .get_module_local_mut(scope.module)
-                    .pools
-                    .functions
-                    .insert(Function::new(
-                        scope.get_id(),
-                        r#in,
-                        scope.module,
-                        MaybeUninit::uninit().assume_init(),
-                    ));
-                let complete = self
-                    .add_element(
-                        ElementKey::Temp,
-                        scope,
-                        Some(ElementAuthored::Expr(Expr::FunctionOptimized(
-                            function.get_id(),
-                        ))),
-                    )
-                    .ok()?;
-                function.complete = complete;
-                Expr::Value(StaticValue::Function(function.get_id()))
-            }
-            _ => Expr::Value(StaticValue::Err),
-        };
-        Some(expr)
+        parse_value(self, source, element_id, scope)
     }
     /// # Safety
     /// `location` is local
@@ -1149,10 +915,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let root_scope_element = self.get_module(module_id).root_scope.unwrap();
         if let Some(authored) = module_local.authored {
             let root_scope = unsafe { self.add_scope(None, Some(authored), module_id) }.get_id();
-            self.set_element_value(
-                root_scope_element,
-                Value::Static(StaticValue::Scope(root_scope)),
-            );
+            self.set_element_value(root_scope_element, Value::Scope(value::Scope(root_scope)));
             for element in module_local.pools.get::<Element>().iter() {
                 unsafe {
                     // SAFETY: local: `module` -> `element`
@@ -1170,41 +933,36 @@ pub trait InterpreterLikeMut: InterpreterLike {
     /// # Safety
     /// - `element_id` is local.
     unsafe fn run_element(&mut self, element_id: Id<Element>) {
-        let mut expr = {
-            let element_local = unsafe { self.get_local_mut(element_id) };
+        let element_local = unsafe { self.get_local_mut(element_id) };
 
-            log::error!(
-                "{element_id:?}: resolved: {}, dependencies_len: {}",
-                element_local.is_resolved(),
-                element_local.dependants.len()
-            );
+        log::error!(
+            "{element_id:?}: resolved: {}, dependencies_len: {}",
+            element_local.is_resolved(),
+            element_local.dependants.len()
+        );
 
-            if element_local.is_running {
-                element_local.is_running = true;
-                return;
-            } else {
-                element_local.is_running = true;
-            }
+        if element_local.is_running {
+            element_local.is_running = true;
+            return;
+        } else {
+            element_local.is_running = true;
+        }
 
-            if element_local.is_resolved() || element_local.dependency_count > 0 {
-                element_local.is_running = false;
-                return;
-            }
+        if element_local.is_resolved() || element_local.dependency_count > 0 {
+            element_local.is_running = false;
+            return;
+        }
 
-            let Some(expr) = element_local.expr else {
-                element_local.is_running = false;
-                return;
-            };
-
-            expr
+        if element_local.expr.is_none() {
+            element_local.is_running = false;
+            return;
         };
 
-        let resolved_value = self.run_value(&mut expr, element_id);
+        let resolved_value = self.run_value(element_id);
 
         {
             let element_local = unsafe { self.get_local_mut(element_id) };
             element_local.is_running = false;
-            element_local.expr = Some(expr);
             if element_local.dependency_count > 0 {
                 return;
             }
@@ -1212,500 +970,13 @@ pub trait InterpreterLikeMut: InterpreterLike {
 
         self.set_element_value(
             element_id,
-            resolved_value.unwrap_or(Value::Static(StaticValue::Err)),
+            resolved_value.unwrap_or(Value::Error(value::Error)),
         );
     }
     /// # Panic
     /// - when concurrent, element is not in local thread.
-    fn run_value(&mut self, expr: &mut Expr, element_id: Id<Element>) -> Option<Value> {
-        let scope = self.get(element_id).scope;
-        let module = self.get(scope).module;
-        let expr = match *expr {
-            Expr::Value(value) => Value::Static(value),
-            Expr::Ref { element, source } => {
-                self.depend_element_value(element_id, element, Some(source))?
-            }
-            Expr::Find { name, source } => {
-                if let Some(ref_element_id) = self.find_element(scope, name, true) {
-                    *expr = Expr::Ref {
-                        element: ref_element_id,
-                        source: source.upcast(),
-                    };
-                    self.depend_element_value(element_id, ref_element_id, Some(source.upcast()))?
-                } else {
-                    unsafe {
-                        self.diagnose(
-                            Location::Element(element_id),
-                            Diagnostic::FailedFindElement {
-                                source: source.upcast(),
-                            },
-                        )
-                    };
-                    return None;
-                }
-            }
-            Expr::MetaFind { name, source } => {
-                if let Some(ref_element_id) = self.find_element(scope, name, true) {
-                    Value::Static(StaticValue::Element(ref_element_id))
-                } else {
-                    unsafe {
-                        self.diagnose(
-                            Location::Element(element_id),
-                            Diagnostic::FailedFindElement {
-                                source: source.upcast(),
-                            },
-                        )
-                    };
-                    return None;
-                }
-            }
-            Expr::FindIn {
-                value: ref_element_id,
-                key,
-                key_source,
-                source,
-            } => {
-                let value = self.depend_child_element_value(element_id, ref_element_id)?;
-                match value {
-                    Value::Static(value) => match value {
-                        StaticValue::Scope(scope_id) => {
-                            log::error!("find element {}", &*self.id2str(key));
-                            if let Some(find_element_id) = self.find_element(scope_id, key, false) {
-                                *expr = Expr::Ref {
-                                    element: find_element_id,
-                                    source: key_source.upcast(),
-                                };
-                                self.depend_element_value(
-                                    element_id,
-                                    find_element_id,
-                                    Some(key_source.upcast()),
-                                )?
-                            } else {
-                                unsafe {
-                                    self.diagnose(
-                                        Location::Element(element_id),
-                                        Diagnostic::FailedFindElement {
-                                            source: key_source.upcast(),
-                                        },
-                                    )
-                                };
-                                return None;
-                            }
-                        }
-                        _ => return None,
-                    },
-                    _ => return None,
-                }
-            }
-            Expr::MetaFindIn {
-                value: ref_element_id,
-                key,
-                key_source,
-                source,
-            } => {
-                let value = self.depend_child_element_value(element_id, ref_element_id)?;
-                match value {
-                    Value::Static(value) => match value {
-                        StaticValue::Scope(scope_id) => {
-                            log::error!("find element {}", &*self.id2str(key));
-                            if let Some(find_element_id) = self.find_element(scope_id, key, false) {
-                                Value::Static(StaticValue::Element(find_element_id))
-                            } else {
-                                unsafe {
-                                    self.diagnose(
-                                        Location::Element(element_id),
-                                        Diagnostic::FailedFindElement {
-                                            source: key_source.upcast(),
-                                        },
-                                    )
-                                };
-                                return None;
-                            }
-                        }
-                        _ => return None,
-                    },
-                    _ => return None,
-                }
-            }
-            Expr::Call {
-                func,
-                param: param_id,
-                source,
-            } => {
-                let func = self
-                    .depend_child_element_value(element_id, func)
-                    .expect(&format!("{:?}", self.get(func)));
-                let param = self
-                    .depend_child_element_value(element_id, param_id)
-                    .expect(&format!("{:?}", self.get(param_id)));
-                match func {
-                    Value::Static(value) => match value {
-                        StaticValue::Builtin(builtin) => match builtin {
-                            Builtin::Mod => {
-                                if let Some(scope) = merge_in!(self, param) {
-                                    return Some(Value::In {
-                                        scope,
-                                        r#type: Some(Type {
-                                            value: StaticValue::ScopeTy,
-                                            depth: 0,
-                                        }),
-                                    });
-                                }
-                                let path = *param.as_static().ok()?.as_string().ok()?;
-                                let str = erase(self).id2str(path);
-                                let path = Path::new(SRC_PATH)
-                                    .join(str.deref())
-                                    .with_extension(SRC_FILE_EXTENSION);
-                                let file = self.find_file(path)?;
-                                let module_id = self.get_file(file).is_module?;
-                                let module = self.get_module(module_id);
-                                let root_scope = *self
-                                    .depend_element_value(
-                                        element_id,
-                                        module.root_scope.unwrap(),
-                                        Some(source.upcast()),
-                                    )?
-                                    .as_static()
-                                    .ok()?
-                                    .as_scope()
-                                    .ok()?;
-
-                                Value::Static(StaticValue::Scope(root_scope))
-                            }
-                            Builtin::Diagnose => {
-                                let scope = *param.as_static().ok()?.as_scope().ok()?;
-                                let on_key = self.str2id("on");
-                                let source_key = self.str2id("source");
-                                let text_key = self.str2id("text");
-
-                                let on = *self
-                                    .depend_element_value(
-                                        element_id,
-                                        self.find_element(scope, on_key, false)?,
-                                        Some(source.upcast()),
-                                    )?
-                                    .as_static()
-                                    .ok()?
-                                    .as_int()
-                                    .ok()?;
-                                let text = *self
-                                    .depend_element_value(
-                                        element_id,
-                                        self.find_element(scope, text_key, false)?,
-                                        Some(source.upcast()),
-                                    )?
-                                    .as_static()
-                                    .ok()?
-                                    .as_string()
-                                    .ok()?;
-                                let source_element = *self
-                                    .depend_element_value(
-                                        element_id,
-                                        self.find_element(scope, source_key, false)?,
-                                        Some(source.upcast()),
-                                    )?
-                                    .as_static()
-                                    .ok()?
-                                    .as_element()
-                                    .ok()?;
-                                if on != 0 && self.is_local(source_element) {
-                                    unsafe {
-                                        self.diagnose(
-                                            Location::Element(source_element),
-                                            Diagnostic::Custom {
-                                                source: self
-                                                    .get(source_element)
-                                                    .source
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .key_source
-                                                    .unwrap()
-                                                    .upcast(),
-                                                text,
-                                            },
-                                        )
-                                    };
-                                }
-                                Value::Static(StaticValue::Trivial)
-                            }
-                            _ => return None,
-                        },
-                        StaticValue::Function(function) => {
-                            let function = erase(self).get(function);
-                            let _ = self
-                                .depend_child_element_value(element_id, function.complete)
-                                .expect(&format!("{:?}", self.get(function.complete)));
-                            let optimized = unsafe { function.optimized.as_ref_unchecked() };
-                            struct Context<'a, IP: ?Sized> {
-                                interpreter: &'a mut IP,
-                                optimized: &'a FunctionOptimized,
-                                parent: Id<Scope>,
-                                module: ModuleId,
-                                element_map: Vec<Option<Id<Element>>>,
-                                scope_map: Vec<Option<Id<Scope>>>,
-                                param_id: Id<Element>,
-                            }
-                            let mut ctx = Context {
-                                interpreter: self,
-                                optimized,
-                                parent: scope,
-                                module,
-                                element_map: Default::default(),
-                                scope_map: Default::default(),
-                                param_id,
-                            };
-                            impl<'a, IP: InterpreterLikeMut + ?Sized> Context<'a, IP> {
-                                fn instantiate_scope(&mut self, id: Id<Scope>) -> Id<Scope> {
-                                    if let Some(id) = self.scope_map.get(id.0).copied().flatten() {
-                                        return id;
-                                    }
-                                    let scope = unsafe {
-                                        erase_mut(self).interpreter.add_scope(
-                                            Some(self.parent),
-                                            None,
-                                            self.module,
-                                        )
-                                    };
-                                    let scope_id = scope.get_id();
-                                    let function_scope = &self.optimized.scopes[id.0];
-                                    for element in function_scope.elements.iter().copied() {
-                                        self.instantiate_element(scope, element);
-                                    }
-                                    if self.scope_map.len() <= id.0 {
-                                        self.scope_map.resize(id.0 + 1, Default::default());
-                                    }
-                                    self.scope_map[id.0] = Some(scope_id);
-                                    scope_id
-                                }
-                                fn instantiate_element(
-                                    &mut self,
-                                    scope: &mut Scope,
-                                    id: Id<Element>,
-                                ) -> Id<Element> {
-                                    if id == IN_OPTIMIZED {
-                                        return self.param_id;
-                                    }
-                                    if let Some(id) = self.element_map.get(id.0).copied().flatten()
-                                    {
-                                        return id;
-                                    }
-                                    let function_element = &self.optimized.elements[id.0];
-                                    let authored = match function_element.authored {
-                                        FunctionElementAuthored::Expr(expr) => {
-                                            ElementAuthored::Expr(
-                                                expr.map_ref(|id| {
-                                                    self.instantiate_element(scope, id)
-                                                }),
-                                            )
-                                        }
-                                        FunctionElementAuthored::Value(value) => {
-                                            let value = match *value.as_static().unwrap() {
-                                                StaticValue::Scope(id) => Value::Static(
-                                                    StaticValue::Scope(self.instantiate_scope(id)),
-                                                ),
-                                                _ => value,
-                                            };
-                                            ElementAuthored::Value(value)
-                                        }
-                                    };
-                                    let new_id = self
-                                        .interpreter
-                                        .add_element(function_element.key, scope, Some(authored))
-                                        .unwrap();
-                                    if self.element_map.len() <= id.0 {
-                                        self.element_map.resize(id.0 + 1, Default::default());
-                                    }
-                                    self.element_map[id.0] = Some(new_id);
-                                    new_id
-                                }
-                            }
-                            Value::Static(StaticValue::Scope(
-                                ctx.instantiate_scope(optimized.root_scope.unwrap()),
-                            ))
-                        }
-                        _ => return None,
-                    },
-                    _ => {
-                        return None;
-                    }
-                }
-            }
-            Expr::FunctionOptimized(id) => {
-                let function = erase(self).get(id);
-                let scope = erase(self).get(function.scope);
-
-                struct ResolveContext<'a, IP: ?Sized> {
-                    interpreter: &'a mut IP,
-                    resolved: bool,
-                    element_id: Id<Element>,
-                    function: &'a Function,
-                    scope: &'a Scope,
-                    visited_elements: HashSet<Id<Element>>,
-                    visited_scope: HashSet<Id<Scope>>,
-                }
-                let mut ctx = ResolveContext {
-                    interpreter: self,
-                    resolved: true,
-                    element_id,
-                    function,
-                    scope,
-                    visited_elements: Default::default(),
-                    visited_scope: Default::default(),
-                };
-                impl<'a, IP: InterpreterLikeMut + ?Sized> ResolveContext<'a, IP> {
-                    fn visit(&mut self, id: Id<Element>) {
-                        if id == self.function.r#in {
-                            return;
-                        }
-                        if let Some(value) = self
-                            .interpreter
-                            .depend_child_element_value(self.element_id, id)
-                        {
-                            if let Value::Static(value) = value {
-                                if let StaticValue::Scope(scope) = value {
-                                    self.resolve_scope(scope);
-                                }
-                            }
-                        } else {
-                            self.resolved = false;
-                        }
-                        self.visited_elements.insert(id);
-                    }
-                    fn if_terminate(&self, id: Id<Element>) -> bool {
-                        let element = unsafe { self.interpreter.get_local(id) };
-                        if let Some(value) = element.value {
-                            if let Value::In { scope, r#type } = value {
-                                scope != self.function.scope
-                            } else {
-                                true
-                            }
-                        } else {
-                            true
-                        }
-                    }
-                    fn visited(&self, id: Id<Element>) -> bool {
-                        self.visited_elements.contains(&id)
-                    }
-                    fn resolve_element(&mut self, element: Id<Element>) {
-                        erase(self).interpreter.traverse(
-                            self,
-                            Self::visit,
-                            Self::if_terminate,
-                            Self::visited,
-                            element,
-                        );
-                    }
-                    fn resolve_scope(&mut self, scope: Id<Scope>) {
-                        if self.visited_scope.insert(scope) {
-                            let scope = erase(self).interpreter.get(scope);
-                            for element in scope.elements.values().copied() {
-                                self.resolve_element(element);
-                            }
-                        }
-                    }
-                }
-                ctx.resolve_scope(function.scope);
-                if !ctx.resolved {
-                    return None;
-                }
-
-                let optimized = unsafe { function.optimized.as_mut_unchecked() };
-                struct CollectContext<'a, IP: ?Sized> {
-                    interpreter: &'a IP,
-                    function: &'a Function,
-                    optimized: &'a mut FunctionOptimized,
-                    scope: &'a Scope,
-                    element_map: HashMap<Id<Element>, Id<Element>>,
-                    scope_map: HashMap<Id<Scope>, Id<Scope>>,
-                }
-                let mut ctx = CollectContext {
-                    interpreter: self,
-                    function,
-                    optimized,
-                    scope,
-                    element_map: Default::default(),
-                    scope_map: Default::default(),
-                };
-                impl<'a, IP: InterpreterLikeMut + ?Sized> CollectContext<'a, IP> {
-                    fn collect(&mut self, id: Id<Element>, expr: Option<Expr>) -> Id<Element> {
-                        if id == self.function.r#in {
-                            return IN_OPTIMIZED;
-                        }
-                        let function_element = FunctionElement {
-                            authored: {
-                                let element = unsafe { self.interpreter.get_local(id) };
-                                let value = element.value.unwrap();
-                                match value {
-                                    Value::In { scope, .. } => {
-                                        if scope == self.scope.get_id() {
-                                            FunctionElementAuthored::Expr(
-                                                expr.unwrap_or(element.expr.unwrap()),
-                                            )
-                                        } else {
-                                            FunctionElementAuthored::Value(value)
-                                        }
-                                    }
-                                    Value::Static(value) => match value {
-                                        StaticValue::Scope(id) => {
-                                            let id = self.run_scope(id);
-                                            FunctionElementAuthored::Value(Value::Static(
-                                                StaticValue::Scope(id),
-                                            ))
-                                        }
-                                        _ => FunctionElementAuthored::Value(Value::Static(value)),
-                                    },
-                                }
-                            },
-                            key: self.interpreter.get(id).key,
-                        };
-                        self.optimized.elements.push(function_element);
-                        let new_id = Id::from_idx(self.optimized.elements.len() - 1);
-                        debug_assert!(self.element_map.insert(id, new_id).is_none());
-                        new_id
-                    }
-                    fn if_terminate(&self, id: Id<Element>) -> bool {
-                        if let Value::In { scope, r#type } =
-                            unsafe { self.interpreter.get_local(id).value.unwrap() }
-                        {
-                            scope != self.function.scope
-                        } else {
-                            true
-                        }
-                    }
-                    fn element_map(&self, id: Id<Element>) -> Option<Id<Element>> {
-                        self.element_map.get(&id).copied()
-                    }
-                    fn run_scope(&mut self, scope: Id<Scope>) -> Id<Scope> {
-                        if let Some(scope) = self.scope_map.get(&scope).copied() {
-                            return scope;
-                        }
-                        let mut elements = vec![];
-                        let scope = self.interpreter.get(scope);
-                        for element in scope.elements.values().copied() {
-                            elements.push(self.run_element(element));
-                        }
-                        self.optimized.scopes.push(FunctionScope { elements });
-                        let new_id = Id::from_idx(self.optimized.scopes.len() - 1);
-                        self.scope_map.insert(scope.get_id(), new_id);
-                        new_id
-                    }
-                    fn run_element(&mut self, element: Id<Element>) -> Id<Element> {
-                        self.interpreter.collect(
-                            self,
-                            Self::collect,
-                            Self::if_terminate,
-                            Self::element_map,
-                            element,
-                        )
-                    }
-                }
-                optimized.root_scope = Some(ctx.run_scope(function.scope));
-                Value::Static(StaticValue::FunctionOptimized(function.get_id()))
-            }
-            _ => return None,
-        };
-
-        Some(expr)
+    fn run_value(&mut self, element_id: Id<Element>) -> Option<Value> {
+        run::Context::run_value(self, element_id)
     }
     /// # Panic
     /// - when concurrent, element is not in local thread.
