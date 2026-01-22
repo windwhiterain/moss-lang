@@ -46,8 +46,8 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             param,
         };
         match builtin_function {
-            BuiltinFunction::Mod => todo!(),
-            BuiltinFunction::Diagnose => todo!(),
+            BuiltinFunction::Mod => ctx.run_mod(),
+            BuiltinFunction::Diagnose => ctx.run_diagnose(),
         }
     }
     fn run_mod(&mut self) -> Option<Value> {
