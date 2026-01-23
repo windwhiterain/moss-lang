@@ -64,7 +64,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let module = self.ip.get_module(module_id);
         let root_scope = self
             .ip
-            .depend_element_value(self.element_id, module.root_scope.unwrap(), self.source)?
+            .depend_element(self.element_id, module.root_scope.unwrap(), self.source)?
             .as_scope()
             .ok()?
             .0;
@@ -79,7 +79,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
 
         let on = self
             .ip
-            .depend_element_value(
+            .depend_element(
                 self.element_id,
                 self.ip.find_element(scope, on_key, false)?,
                 self.source,
@@ -89,7 +89,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             .0;
         let text = self
             .ip
-            .depend_element_value(
+            .depend_element(
                 self.element_id,
                 self.ip.find_element(scope, text_key, false)?,
                 self.source,
@@ -99,7 +99,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             .0;
         let source_element = self
             .ip
-            .depend_element_value(
+            .depend_element(
                 self.element_id,
                 self.ip.find_element(scope, source_key, false)?,
                 self.source,

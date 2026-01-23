@@ -66,15 +66,11 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Scope, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let scope = self.ctx.get(self.value.0);
         write!(f, "{{")?;
-        for (key, element) in scope.elements.iter() {
+        for key in scope.elements.keys() {
             write!(
                 f,
-                "{} = {}; ",
+                "{}, ",
                 self.ctx.id2str(*key).deref(),
-                self.ctx
-                    .get_element_value(*element)
-                    .unwrap_or(Value::Error(Error))
-                    .with_ctx(self.ctx)
             )?;
         }
         write!(f, "}}")
@@ -91,18 +87,12 @@ impl Display for ScopeType {
 pub struct Element(pub Id<element::Element>);
 impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Element, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "@{}",
-            {
-                let element = self.ctx.get(self.value.0);
-                let ElementKey::Name(name) = element.key else {
-                    unreachable!()
-                };
-                self.ctx.id2str(name)
-            }
-            .deref()
-        )
+        let element = self.ctx.get(self.value.0);
+        let name = match element.key {
+            ElementKey::Name(name) => &*self.ctx.id2str(name),
+            ElementKey::Temp => "<Temp>",
+        };
+        write!(f, "@{}", name)
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,15 +144,14 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Param, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let param = self.ctx.get(self.value.0);
         let function = self.ctx.get(param.function);
-        let scope = self.ctx.get(function.scope);
-        write!(f, "Param{{depth: {}}}", scope.depth)?;
+        let param_name =  self.ctx.id2str(*self.ctx.get(function.r#in).key.extract_as_name());
+        write!(f, "{}",&*param_name)?;
         if let Some(r#type) = param.r#type {
             write!(f, ":")?;
             if r#type.depth > 0 {
                 write!(f, "^{}", r#type.depth)?;
             }
-            write!(f, " ")?;
-            write!(f, ": {}", r#type.value.with_ctx(self.ctx))?;
+            write!(f, " {}", r#type.value.with_ctx(self.ctx))?;
         }
         Ok(())
     }

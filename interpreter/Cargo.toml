@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-arc-swap = { version = "1.8.0", path = "../extern/arc-swap" }
 crossbeam = "0.8.4"
 dashmap = "6.1.0"
 enum-extract-error = "0.1.1"

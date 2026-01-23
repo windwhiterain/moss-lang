@@ -47,24 +47,21 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
             Expr::Ref(..) => ctx.run_ref(),
             Expr::Find(..) => ctx.run_find(),
             Expr::Call(..) => ctx.run_call(),
-            Expr::FunctionOptimize(..) => {
-                function::OptimizeContext::run(&mut ctx);
-                Some(Value::Trivial(value::Trivial))
-            }
+            Expr::FunctionOptimize(..) => function::OptimizeContext::run(&mut ctx),
             Expr::Value(value) => Some(*value),
         }
     }
     fn run_ref(&mut self) -> Option<Value> {
         let r#ref = self.expr.extract_as_ref();
         self.ip
-            .depend_element_value(self.element_id, r#ref.element_id, self.source)
+            .depend_element(self.element_id, r#ref.element_id, self.source)
     }
     fn run_find(&mut self) -> Option<Value> {
         let find = self.expr.extract_as_find();
         let find_element_id = if let Some(target) = find.target {
             let target = self
                 .ip
-                .depend_child_element_value(self.element_id, target)?;
+                .depend_child_element(self.element_id, target)?;
             match target {
                 Value::Scope(value::Scope(scope_id)) => {
                     self.ip.find_element(scope_id, find.name, false)
@@ -94,7 +91,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
                 });
 
                 self.ip
-                    .depend_element_value(self.element_id, find_element_id, self.source)
+                    .depend_element(self.element_id, find_element_id, self.source)
             } else {
                 Some(Value::Element(value::Element(find_element_id)))
             }
@@ -114,12 +111,12 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let call = self.expr.extract_as_call();
         let function = self
             .ip
-            .depend_child_element_value(self.element_id, call.function)?;
+            .depend_child_element(self.element_id, call.function)?;
         match function {
             Value::BuiltinFunction(builtin) => {
                 let param = self
                     .ip
-                    .depend_child_element_value(self.element_id, call.param)?;
+                    .depend_child_element(self.element_id, call.param)?;
                 buitin_function::Context::run(self, builtin, param)
             }
             Value::Function(function) => function::CallContext::run(self, function, call.param),

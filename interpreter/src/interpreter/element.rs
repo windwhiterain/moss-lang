@@ -1,3 +1,4 @@
+use enum_extract_macro::EnumExtract;
 use smallvec::SmallVec;
 use std::sync::OnceLock;
 use type_sitter::UntypedNode;
@@ -9,7 +10,7 @@ use crate::{
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug,EnumExtract)]
 pub enum ElementKey {
     Name(StringId),
     Temp,

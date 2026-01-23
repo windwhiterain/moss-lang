@@ -15,7 +15,7 @@ use crate::{
         scope::Scope,
         value::{self, Value},
     },
-    utils::{erase, erase_mut},
+    utils::{contexted::WithContext, erase, erase_mut},
 };
 
 pub struct CallContext<'a, IP> {
@@ -36,7 +36,7 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         let function = erase(ctx.ip).get(function.0);
         let _ = ctx
             .ip
-            .depend_child_element_value(ctx.element_id, function.complete)?;
+            .depend_child_element(ctx.element_id, function.complete)?;
         let optimized = unsafe { function.optimized.as_ref_unchecked() };
         let mut ctx = CallContext {
             interpreter: ctx.ip,
@@ -118,7 +118,7 @@ pub struct OptimizeContext<'a, IP: InterpreterLikeMut> {
 }
 
 impl<'a, 'b: 'a, IP: InterpreterLikeMut> OptimizeContext<'a, IP> {
-    pub fn run(ctx: &'a mut super::Context<'b, IP>) {
+    pub fn run(ctx: &'a mut super::Context<'b, IP>) -> Option<Value> {
         let function_optimize = ctx.expr.extract_as_function_optimize();
         let function = erase(ctx).ip.get(function_optimize.function);
         let optimized = unsafe { function.optimized.as_mut_unchecked() };
@@ -131,11 +131,13 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> OptimizeContext<'a, IP> {
             element_map: Default::default(),
             scope_map: Default::default(),
         };
-        ctx.depend_scope(function.scope);
+        ctx.depend_scope(function.scope)?;
+        log::error!("{}",value::Scope(function.scope).with_ctx(ctx.ip));
         ctx.optimized.root_scope = Some(ctx.map_scope(function.scope));
+        Some(Value::Trivial(value::Trivial))
     }
     fn depend_scope(&mut self, scope_id: Id<Scope>) -> Option<()> {
-        if self.resolved_scopes.insert(scope_id) {
+        if !self.resolved_scopes.insert(scope_id) {
             return Some(());
         }
         let scope = erase(self).ip.get(scope_id);
@@ -147,7 +149,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> OptimizeContext<'a, IP> {
     fn depend_element(&mut self, element_id: Id<Element>) -> Option<()> {
         let value = self
             .ip
-            .depend_child_element_value(self.element_id, element_id)?;
+            .depend_child_element(self.element_id, element_id)?;
         if let Value::Scope(value::Scope(scope_id)) = value {
             self.depend_scope(scope_id)?;
         }

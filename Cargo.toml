@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["interpreter","language-server","cli","zed-extension","extern/arc-swap"]
+members = ["interpreter","language-server","cli","zed-extension"]
 exclude = ["tree-sitter-moss"]
 
 [workspace.dependencies]

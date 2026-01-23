@@ -1,4 +1,4 @@
-use std::{borrow::Cow, mem::MaybeUninit};
+use std::borrow::Cow;
 
 use type_sitter::{HasChild as _, Node as _, NodeResult};
 
@@ -29,10 +29,10 @@ struct Context<'a, IP: ?Sized> {
 }
 
 enum FindSource {
-    Default(moss::Name<'static>),
-    Meta(moss::Meta<'static>),
-    Targeted(moss::Find<'static>),
-    MetaTargeted(moss::FindMeta<'static>),
+    Find(moss::Find<'static>),
+    MetaFind(moss::MetaFind<'static>),
+    FindIn(moss::FindIn<'static>),
+    MetaFindIn(moss::MetaFindIn<'static>),
 }
 
 impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
@@ -90,29 +90,38 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
     fn parse_find(&mut self, find: FindSource) -> Option<Expr> {
         let (target, name, meta) = unsafe {
             match find {
-                FindSource::Targeted(find) => (
+                FindSource::FindIn(find) => (
                     Some(
                         self.ip
                             .grammar_error(Location::Element(self.element_id), find.value())?,
                     ),
                     self.ip
-                        .grammar_error(Location::Element(self.element_id), find.name())?,
+                        .grammar_error(Location::Element(self.element_id), find.name())?
+                        .upcast(),
                     false,
                 ),
-                FindSource::MetaTargeted(find) => (
+                FindSource::MetaFindIn(find) => (
                     Some(
                         self.ip
                             .grammar_error(Location::Element(self.element_id), find.value())?,
                     ),
                     self.ip
-                        .grammar_error(Location::Element(self.element_id), find.name())?,
+                        .grammar_error(Location::Element(self.element_id), find.name())?
+                        .upcast(),
                     true,
                 ),
-                FindSource::Default(name) => (None, name, false),
-                FindSource::Meta(meta) => (
+                FindSource::Find(find) => (
                     None,
                     self.ip
-                        .grammar_error(Location::Element(self.element_id), meta.name())?,
+                        .grammar_error(Location::Element(self.element_id), find.name())?
+                        .upcast(),
+                    false,
+                ),
+                FindSource::MetaFind(meta) => (
+                    None,
+                    self.ip
+                        .grammar_error(Location::Element(self.element_id), meta.name())?
+                        .upcast(),
                     true,
                 ),
             }
@@ -194,7 +203,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
         let (r#in, scope) = unsafe {
             let r#in = self
                 .ip
-                .grammar_error(Location::Element(self.element_id), function.in_())?;
+                .grammar_error(Location::Element(self.element_id), function.param())?;
             let scope = self
                 .ip
                 .grammar_error(Location::Element(self.element_id), function.scope())?;
@@ -219,9 +228,9 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             .functions
             .insert(Function::new(
                 scope.get_id(),
-                unsafe { MaybeUninit::uninit().assume_init() },
+                Id::DUMMY,
                 scope.module,
-                unsafe { MaybeUninit::uninit().assume_init() },
+                Id::DUMMY,
             ));
 
         let param = unsafe {
@@ -263,22 +272,22 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
     }
     fn parse(&mut self) -> Option<Expr> {
         match self.source_child {
-            moss::ValueChild::Bracket(bracket) => {
-                parse_value(self.ip, bracket.value(), self.element_id, self.scope)
-            }
-            moss::ValueChild::Call(call) => self.parse_call(call),
-            moss::ValueChild::Scope(scope) => self.parse_scope(scope),
-            moss::ValueChild::Find(find) => self.parse_find(FindSource::Targeted(find)),
-            moss::ValueChild::FindMeta(find_meta) => {
-                self.parse_find(FindSource::MetaTargeted(find_meta))
-            }
             moss::ValueChild::Int(int) => Some(Expr::Value(Value::Int(value::Int(
                 self.ip.get_source_str(&int, self.file_id).parse().unwrap(),
             )))),
-            moss::ValueChild::Name(name) => self.parse_find(FindSource::Default(name)),
             moss::ValueChild::String(string) => self.parse_string(string),
-            moss::ValueChild::Meta(meta) => self.parse_find(FindSource::Meta(meta)),
+            moss::ValueChild::Call(call) => self.parse_call(call),
+            moss::ValueChild::Scope(scope) => self.parse_scope(scope),
+            moss::ValueChild::Find(find) => self.parse_find(FindSource::Find(find)),
+            moss::ValueChild::MetaFind(meta) => self.parse_find(FindSource::MetaFind(meta)),
+            moss::ValueChild::FindIn(find) => self.parse_find(FindSource::FindIn(find)),
+            moss::ValueChild::MetaFindIn(find_meta) => {
+                self.parse_find(FindSource::MetaFindIn(find_meta))
+            }
             moss::ValueChild::Function(function) => self.parse_function(function),
+            moss::ValueChild::Bracket(bracket) => {
+                parse_value(self.ip, bracket.value(), self.element_id, self.scope)
+            }
             _ => Some(Expr::Value(Value::Error(value::Error))),
         }
     }

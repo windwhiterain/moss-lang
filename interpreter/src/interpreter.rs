@@ -27,6 +27,7 @@ use crate::interpreter::value::BuiltinFunction;
 use crate::interpreter::value::Value;
 use crate::utils::concurrent_string_interner::ConcurentInterner;
 use crate::utils::concurrent_string_interner::StringId;
+use crate::utils::contexted::WithContext;
 use crate::utils::erase;
 use crate::utils::erase_mut;
 use crate::utils::pool::InPool;
@@ -77,7 +78,7 @@ pub struct Id<T>(*mut T);
 unsafe impl<T> Send for Id<T> {}
 
 impl<T> Id<T> {
-    pub const ANY: Self = Self::from_idx(0);
+    pub const DUMMY: Self = Self::from_idx(0);
     pub const fn from_idx(idx: usize) -> Self {
         Self(idx as *mut T)
     }
@@ -387,7 +388,7 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                 if let Some(signal) = thread.channel.pop() {
                     match signal {
                         Signal::Depend(depend) => {
-                            self.depend_element(
+                            self.depend_element_raw(
                                 depend.dependant,
                                 depend.dependency,
                                 depend.source,
@@ -908,14 +909,12 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let module_local = unsafe { erase_mut(self).get_module_local_mut(module_id) };
         let root_scope_element = self.get_module(module_id).root_scope.unwrap();
         if let Some(authored) = module_local.authored {
-            let root_scope = unsafe { self.add_scope(None, Some(authored), module_id) }.get_id();
-            self.set_element_value(root_scope_element, Value::Scope(value::Scope(root_scope)));
-            for element in module_local.pools.get::<Element>().iter() {
-                unsafe {
-                    // SAFETY: local: `module` -> `element`
-                    self.run_element(element.get_id())
-                };
-            }
+            let root_scope_id = unsafe { self.add_scope(None, Some(authored), module_id) }.get_id();
+            self.set_element_value(
+                root_scope_element,
+                Value::Scope(value::Scope(root_scope_id)),
+            );
+            unsafe { self.run_module_scope(root_scope_id, module_id) };
             module_local.unresolved_count -= 1;
             for dependant in mem::take(&mut module_local.dependants) {
                 self.resolve_element(dependant);
@@ -924,9 +923,33 @@ pub trait InterpreterLikeMut: InterpreterLike {
         }
         log::error!("run module): {:?}", module_id);
     }
+    unsafe fn run_module_scope(&mut self, scope_id: Id<Scope>, module_id: ModuleId) {
+        let scope = erase(self).get(scope_id);
+        if scope.module != module_id {
+            return;
+        }
+        for element_id in scope.elements.values().copied() {
+            unsafe { self.run_module_element(element_id, module_id) };
+        }
+    }
+    unsafe fn run_module_element(&mut self, element_id: Id<Element>, module_id: ModuleId) {
+        unsafe {
+            // SAFETY: local: `module` -> `element`
+            if let Some(value) = self.run_element(element_id) {
+                match value {
+                    Value::Scope(scope) => self.run_module_scope(scope.0, module_id),
+                    Value::Function(function) => {
+                        let function = self.get(function.0);
+                        self.run_module_element(function.complete, module_id);
+                    }
+                    _ => (),
+                };
+            }
+        };
+    }
     /// # Safety
     /// - `element_id` is local.
-    unsafe fn run_element(&mut self, element_id: Id<Element>) {
+    unsafe fn run_element(&mut self, element_id: Id<Element>) -> Option<Value> {
         let element_local = unsafe { self.get_local_mut(element_id) };
 
         log::error!(
@@ -936,20 +959,19 @@ pub trait InterpreterLikeMut: InterpreterLike {
         );
 
         if element_local.is_running {
-            element_local.is_running = true;
-            return;
+            return None;
         } else {
             element_local.is_running = true;
         }
 
         if element_local.is_resolved() || element_local.dependency_count > 0 {
             element_local.is_running = false;
-            return;
+            return None;
         }
 
         if element_local.expr.is_none() {
             element_local.is_running = false;
-            return;
+            return None;
         };
 
         let resolved_value = self.run_value(element_id);
@@ -958,7 +980,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             let element_local = unsafe { self.get_local_mut(element_id) };
             element_local.is_running = false;
             if element_local.dependency_count > 0 {
-                return;
+                return None;
             }
         }
 
@@ -966,6 +988,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
             element_id,
             resolved_value.unwrap_or(Value::Error(value::Error)),
         );
+
+        resolved_value
     }
     /// # Panic
     /// - when concurrent, element is not in local thread.
@@ -1000,19 +1024,19 @@ pub trait InterpreterLikeMut: InterpreterLike {
     /// # Panic
     /// - when concurrent, dependant is not in local thread.
     /// - when not concurrent, dependency id is remote.
-    fn depend_element(
+    fn depend_element_raw(
         &mut self,
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
         source: Option<UntypedNode<'static>>,
         local: bool,
-    ) -> bool {
+    ) -> Option<Value> {
         if self.is_local(dependency_id) {
             unsafe { self.run_element(dependency_id) };
             let dependency = erase_mut(unsafe { self.get_local_mut(dependency_id) });
             if local {
-                if dependency.is_resolved() {
-                    return true;
+                if let Some(value) = dependency.value {
+                    return Some(value);
                 } else {
                     let dependant_local = unsafe { self.get_local_mut(dependant_id) };
                     dependant_local.dependency_count += 1;
@@ -1020,7 +1044,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             } else {
                 if dependency.is_resolved() {
                     self.resolve_element(dependency_id);
-                    return true;
+                    return None;
                 }
             }
             dependency.dependants.push(Dependant {
@@ -1029,8 +1053,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
             });
         } else {
             debug_assert!(local);
-            if self.get(dependency_id).value.get().is_some() {
-                return true;
+            if let Some(value) = self.get(dependency_id).value.get().copied() {
+                return Some(value);
             }
             let dependant_local = unsafe { self.get_local_mut(dependant_id) };
             dependant_local.dependency_count += 1;
@@ -1043,33 +1067,32 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 self.increase_workload();
             }
         }
-        false
+        None
     }
-    /// # Panic
-    /// - when concurrent, dependant is not in local thread.
-    /// - when not concurrent, dependency use remote id.
-    fn depend_element_value(
+    fn depend_element(
         &mut self,
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
         source: Option<UntypedNode<'static>>,
     ) -> Option<Value> {
-        if self.depend_element(dependant_id, dependency_id, source, true) {
-            Some(self.get_element_value(dependency_id).unwrap())
-        } else {
-            None
-        }
+        let v = self.depend_element_raw(dependant_id, dependency_id, source, true);
+        log::error!(
+            "depend {} got {}",
+            value::Element(dependency_id).with_ctx(self),
+            v.unwrap_or(Value::Error(value::Error)).with_ctx(self)
+        );
+        v
     }
     /// # Panic
     /// - when concurrent, any element is not in local thread.
-    fn depend_child_element_value(
+    fn depend_child_element(
         &mut self,
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
     ) -> Option<Value> {
         let dependency = self.get(dependency_id);
         let source = dependency.source.as_ref().map(|x| x.value_source.upcast());
-        self.depend_element_value(dependant_id, dependency_id, source)
+        self.depend_element(dependant_id, dependency_id, source)
     }
     /// # Panic
     /// element is not in threads
@@ -1077,7 +1100,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         if self.is_local(id) {
             let dependant = unsafe { self.get_local_mut(id) };
             dependant.dependency_count -= 1;
-            unsafe { self.run_element(id) }
+            unsafe { self.run_element(id) };
         } else {
             let thread = self.get_thread_remote_of(id).unwrap();
             thread.channel.push(Signal::Resolve(id));
