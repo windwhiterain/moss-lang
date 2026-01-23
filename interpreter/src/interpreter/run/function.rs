@@ -60,7 +60,7 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
                 .add_scope(None, None, self.module_id)
         };
         let mapped_scope_id = mapped_scope.get_id();
-        let function_scope = &self.optimized.scopes[scope_id.to_idx()];
+        let function_scope = self.optimized.scopes.get(scope_id);
         for element in function_scope.elements.iter().copied() {
             self.instantiate_element(mapped_scope, element);
         }
@@ -78,7 +78,7 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         if let Some(id) = self.element_map.get(id.to_idx()).copied().flatten() {
             return id;
         }
-        let function_element = &self.optimized.elements[id.to_idx()];
+        let function_element = self.optimized.elements.get(id);
         let authored = match &function_element.authored {
             FunctionElementAuthored::Expr(expr) => ElementAuthored::Expr({
                 let mut expr = expr.clone();
@@ -132,7 +132,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> OptimizeContext<'a, IP> {
             scope_map: Default::default(),
         };
         ctx.depend_scope(function.scope)?;
-        log::error!("{}",value::Scope(function.scope).with_ctx(ctx.ip));
+        log::error!("{}", value::Scope(function.scope).with_ctx(ctx.ip));
         ctx.optimized.root_scope = Some(ctx.map_scope(function.scope));
         Some(Value::Trivial(value::Trivial))
     }
@@ -147,9 +147,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> OptimizeContext<'a, IP> {
         Some(())
     }
     fn depend_element(&mut self, element_id: Id<Element>) -> Option<()> {
-        let value = self
-            .ip
-            .depend_child_element(self.element_id, element_id)?;
+        let value = self.ip.depend_child_element(self.element_id, element_id)?;
         if let Value::Scope(value::Scope(scope_id)) = value {
             self.depend_scope(scope_id)?;
         }
@@ -159,22 +157,15 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> OptimizeContext<'a, IP> {
         if let Some(mapped) = self.scope_map.get(&scope_id).copied() {
             return mapped;
         }
-        let new_id = Id::from_idx(self.optimized.scopes.len());
-        match self.scope_map.entry(scope_id) {
+        let vacant_entry = match self.scope_map.entry(scope_id) {
             std::collections::hash_map::Entry::Occupied(occupied_entry) => {
                 return *occupied_entry.get();
             }
-            std::collections::hash_map::Entry::Vacant(vacant_entry) => vacant_entry.insert(new_id),
+            std::collections::hash_map::Entry::Vacant(vacant_entry) => vacant_entry,
         };
 
-        self.optimized.scopes.reserve(1);
-        let ptr = unsafe {
-            self.optimized
-                .scopes
-                .as_mut_ptr()
-                .add(self.optimized.scopes.len())
-        };
-        unsafe { self.optimized.scopes.set_len(new_id.to_idx() + 1) };
+        let mapped_id = self.optimized.scopes.insert(FunctionScope::DUMMY);
+        vacant_entry.insert(mapped_id);
 
         let scope = erase(self).ip.get(scope_id);
         let mut elements = vec![];
@@ -183,33 +174,24 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> OptimizeContext<'a, IP> {
         }
         let function_scope = FunctionScope { elements };
 
-        unsafe {
-            ptr.write(function_scope);
-        }
+        *self.optimized.scopes.get_mut(mapped_id) = function_scope;
 
-        self.scope_map.insert(scope_id, new_id);
-        new_id
+        self.scope_map.insert(scope_id, mapped_id);
+        mapped_id
     }
     fn map_element(&mut self, element_id: Id<Element>) -> Id<Element> {
         if element_id == self.function.r#in {
             return OPTIMIZED_PARAM;
         }
-        let new_id = Id::from_idx(self.optimized.elements.len());
-        match self.element_map.entry(element_id) {
+        let vacant_entry = match self.element_map.entry(element_id) {
             std::collections::hash_map::Entry::Occupied(occupied_entry) => {
                 return *occupied_entry.get();
             }
-            std::collections::hash_map::Entry::Vacant(vacant_entry) => vacant_entry.insert(new_id),
+            std::collections::hash_map::Entry::Vacant(vacant_entry) => vacant_entry,
         };
 
-        self.optimized.elements.reserve(1);
-        let ptr = unsafe {
-            self.optimized
-                .elements
-                .as_mut_ptr()
-                .add(self.optimized.elements.len())
-        };
-        unsafe { self.optimized.elements.set_len(new_id.to_idx() + 1) };
+        let mapped_id = self.optimized.elements.insert(FunctionElement::DUMMY);
+        vacant_entry.insert(mapped_id);
 
         let function_element = FunctionElement {
             authored: {
@@ -237,10 +219,8 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> OptimizeContext<'a, IP> {
             key: self.ip.get(element_id).key,
         };
 
-        unsafe {
-            ptr.write(function_element);
-        }
+        *self.optimized.elements.get_mut(mapped_id) = function_element;
 
-        new_id
+        mapped_id
     }
 }

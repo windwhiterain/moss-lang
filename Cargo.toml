@@ -7,3 +7,6 @@ exclude = ["tree-sitter-moss"]
 log = "0.4.28"
 tokio = { version = "1.48.0" }
 hashbrown = { version = "0.16.1", features = ["default-hasher"] }
+tree-sitter = "0.25.10"
+tree-sitter-moss = { version = "0.1.0", path = "tree-sitter-moss" }
+type-sitter = { version = "0.8.1", default-features = false }

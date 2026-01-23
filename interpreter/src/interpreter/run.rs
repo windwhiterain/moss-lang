@@ -59,9 +59,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
     fn run_find(&mut self) -> Option<Value> {
         let find = self.expr.extract_as_find();
         let find_element_id = if let Some(target) = find.target {
-            let target = self
-                .ip
-                .depend_child_element(self.element_id, target)?;
+            let target = self.ip.depend_child_element(self.element_id, target)?;
             match target {
                 Value::Scope(value::Scope(scope_id)) => {
                     self.ip.find_element(scope_id, find.name, false)
@@ -114,9 +112,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
             .depend_child_element(self.element_id, call.function)?;
         match function {
             Value::BuiltinFunction(builtin) => {
-                let param = self
-                    .ip
-                    .depend_child_element(self.element_id, call.param)?;
+                let param = self.ip.depend_child_element(self.element_id, call.param)?;
                 buitin_function::Context::run(self, builtin, param)
             }
             Value::Function(function) => function::CallContext::run(self, function, call.param),

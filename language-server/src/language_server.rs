@@ -25,8 +25,9 @@ use moss_interpreter::{
         scope::Scope,
         value::{self, Value},
     },
-    utils::{contexted::WithContext as _, erase_mut},
+    utils::{contexted::WithContext as _, erase, erase_mut},
 };
+use type_sitter::TreeCursor;
 use walkdir::WalkDir;
 
 pub struct LanguageServer {
@@ -90,121 +91,147 @@ impl LanguageServer {
 
         struct Context<'a> {
             file_id: FileId,
-            language_server: &'a LanguageServer,
-            interpreter: &'a Interpreter,
+            ls: &'a LanguageServer,
+            ip: &'a Interpreter,
             lsp_diagnostics: &'a mut Vec<LspDiagnostic>,
+            cursor: TreeCursor<'static>,
         }
         impl<'a> Context<'a> {
+            fn grammar(&mut self) {
+                loop {
+                    let node = self.cursor.node();
+
+                    if node.is_extra() {
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            node,
+                            format!("grammar error: extra {}", node.kind()),
+                            DiagnosticSeverity::ERROR,
+                        ));
+                    }
+
+                    if node.is_error() {
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            node,
+                            format!("grammar error: error token"),
+                            DiagnosticSeverity::ERROR,
+                        ));
+                    }
+
+                    if node.is_missing() {
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            node,
+                            format!("grammar error: missing {}", node.kind()),
+                            DiagnosticSeverity::ERROR,
+                        ));
+                    }
+
+                    if self.cursor.goto_first_child() {
+                        self.grammar();
+                        self.cursor.goto_parent();
+                    }
+
+                    if !self.cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
             fn diagnose(&mut self, diagnostic: &Diagnostic) {
                 match diagnostic {
                     Diagnostic::GrammarError { source } => {
-                        self.lsp_diagnostics
-                            .push(self.language_server.make_diagnostic(
-                                *source,
-                                "grammar error",
-                                DiagnosticSeverity::ERROR,
-                            ));
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            *source,
+                            "grammar error",
+                            DiagnosticSeverity::ERROR,
+                        ));
                     }
                     Diagnostic::RedundantElementKey { source } => {
-                        self.lsp_diagnostics
-                            .push(self.language_server.make_diagnostic(
-                                *source,
-                                "element key redundancy",
-                                DiagnosticSeverity::ERROR,
-                            ));
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            *source,
+                            "element key redundancy",
+                            DiagnosticSeverity::ERROR,
+                        ));
                     }
                     Diagnostic::FailedFindElement { source } => {
-                        self.lsp_diagnostics
-                            .push(self.language_server.make_diagnostic(
-                                *source,
-                                "failed find element",
-                                DiagnosticSeverity::ERROR,
-                            ));
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            *source,
+                            "failed find element",
+                            DiagnosticSeverity::ERROR,
+                        ));
                     }
                     Diagnostic::FialedFindElementOrPrivateElement { source } => {
-                        self.lsp_diagnostics
-                            .push(self.language_server.make_diagnostic(
-                                *source,
-                                "failed find element or private element",
-                                DiagnosticSeverity::ERROR,
-                            ));
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            *source,
+                            "failed find element or private element",
+                            DiagnosticSeverity::ERROR,
+                        ));
                     }
                     Diagnostic::CanNotFindIn { source, value } => {
-                        self.lsp_diagnostics
-                            .push(self.language_server.make_diagnostic(
-                                *source,
-                                format!(
-                                    "can not find element in {}",
-                                    value.with_ctx(self.interpreter)
-                                ),
-                                DiagnosticSeverity::ERROR,
-                            ));
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            *source,
+                            format!("can not find element in {}", value.with_ctx(self.ip)),
+                            DiagnosticSeverity::ERROR,
+                        ));
                     }
                     Diagnostic::CanNotCallOn { source, value } => {
-                        self.lsp_diagnostics
-                            .push(self.language_server.make_diagnostic(
-                                *source,
-                                format!("can not call on {}", value.with_ctx(self.interpreter)),
-                                DiagnosticSeverity::ERROR,
-                            ));
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            *source,
+                            format!("can not call on {}", value.with_ctx(self.ip)),
+                            DiagnosticSeverity::ERROR,
+                        ));
                     }
                     Diagnostic::PathError { source } => {
-                        self.lsp_diagnostics
-                            .push(self.language_server.make_diagnostic(
-                                *source,
-                                "path error",
-                                DiagnosticSeverity::ERROR,
-                            ));
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            *source,
+                            "path error",
+                            DiagnosticSeverity::ERROR,
+                        ));
                     }
                     Diagnostic::StringEscapeError { source } => {
-                        self.lsp_diagnostics
-                            .push(self.language_server.make_diagnostic(
-                                *source,
-                                "string escape error",
-                                DiagnosticSeverity::ERROR,
-                            ));
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            *source,
+                            "string escape error",
+                            DiagnosticSeverity::ERROR,
+                        ));
                     }
                     Diagnostic::Custom { source, text } => {
-                        self.lsp_diagnostics
-                            .push(self.language_server.make_diagnostic(
-                                *source,
-                                &*self.interpreter.id2str(*text),
-                                DiagnosticSeverity::ERROR,
-                            ));
+                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                            *source,
+                            &*self.ip.id2str(*text),
+                            DiagnosticSeverity::ERROR,
+                        ));
                     }
                 };
             }
             fn traverse(&mut self, scope_id: Id<Scope>) {
-                let scope_local = unsafe { self.interpreter.get_local(scope_id) };
-                let scope = self.interpreter.get(scope_id);
+                let scope_local = unsafe { self.ip.get_local(scope_id) };
+                let scope = self.ip.get(scope_id);
                 for diagnostic in &scope_local.diagnoistics {
                     self.diagnose(diagnostic);
                 }
                 for element_id in scope.elements.values().copied() {
-                    let element_local = unsafe { self.interpreter.get_local(element_id) };
-                    let element = self.interpreter.get(element_id);
+                    let element_local = unsafe { self.ip.get_local(element_id) };
+                    let element = self.ip.get(element_id);
                     for diagnoistic in &element_local.diagnoistics {
                         self.diagnose(diagnoistic);
                     }
                     if let Some(authored) = &element.source {
                         if let Some(key_node) = authored.key_source {
-                            self.lsp_diagnostics
-                                .push(self.language_server.make_diagnostic(
-                                    key_node.upcast(),
-                                    format!(
+                            self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                                key_node.upcast(),
+                                format!(
                                         "{}",
                                         element_local
                                             .value
                                             .unwrap_or(Value::Error(value::Error))
-                                            .with_ctx(self.interpreter)
+                                            .with_ctx(self.ip)
                                     ),
-                                    DiagnosticSeverity::HINT,
-                                ));
+                                DiagnosticSeverity::HINT,
+                            ));
                         }
                     }
                 }
                 for child_id in scope_local.children.iter().copied() {
-                    let child = self.interpreter.get(child_id);
+                    let child = self.ip.get(child_id);
                     if let Some(file) = child.get_file()
                         && file == self.file_id
                     {
@@ -231,11 +258,13 @@ impl LanguageServer {
 
         let mut context = Context {
             file_id,
-            language_server: self,
-            interpreter,
+            ls: self,
+            ip: interpreter,
             lsp_diagnostics: &mut lsp_diagnostics,
+            cursor: erase(file).tree.walk(),
         };
 
+        context.grammar();
         context.traverse(scope_id);
 
         self.client

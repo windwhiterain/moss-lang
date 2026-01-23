@@ -73,23 +73,35 @@ mod run;
 pub const SRC_FILE_EXTENSION: &str = "moss";
 pub const SRC_PATH: &str = "src";
 
-pub struct Id<T>(*mut T);
+pub struct Id<T>(*const T);
 
 unsafe impl<T> Send for Id<T> {}
 
 impl<T> Id<T> {
     pub const DUMMY: Self = Self::from_idx(0);
     pub const fn from_idx(idx: usize) -> Self {
-        Self(idx as *mut T)
+        Self(idx as *const T)
     }
     pub fn from_ptr(ptr: *const T) -> Self {
-        Self(ptr as *mut T)
+        Self(ptr as *const T)
     }
     pub fn to_idx(self) -> usize {
         self.0 as usize
     }
-    pub fn to_ptr(self) -> *mut T {
+    pub fn to_ptr(self) -> *const T {
         self.0
+    }
+}
+
+impl<T> From<Id<T>> for usize {
+    fn from(value: Id<T>) -> Self {
+        value.to_idx()
+    }
+}
+
+impl<T> From<usize> for Id<T> {
+    fn from(value: usize) -> Self {
+        Self::from_idx(value)
     }
 }
 

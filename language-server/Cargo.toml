@@ -13,6 +13,9 @@ tokio = { workspace = true, features = [
 tower-lsp = "0.20.0"
 moss-interpreter = {path = "../interpreter"}
 walkdir = "2.5.0"
+tree-sitter = {workspace = true}
+tree-sitter-moss =  {workspace = true}
+type-sitter =  {workspace = true}
 
 [build-dependencies]
 cc = "*"

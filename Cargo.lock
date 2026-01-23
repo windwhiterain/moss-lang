@@ -756,6 +756,9 @@ dependencies = [
  "moss-interpreter",
  "tokio",
  "tower-lsp",
+ "tree-sitter",
+ "tree-sitter-moss",
+ "type-sitter",
  "walkdir",
 ]
 

@@ -1,3 +1,4 @@
+use crate::utils::typed_key::Vec as KeyVec;
 use crate::{
     interpreter::{
         Id, Managed,
@@ -5,7 +6,7 @@ use crate::{
         expr::Expr,
         module::ModuleId,
         scope::Scope,
-        value::Value,
+        value::{self, Value},
     },
     utils::unsafe_cell::UnsafeCell,
 };
@@ -22,15 +23,28 @@ pub struct FunctionElement {
     pub key: ElementKey,
 }
 
+impl FunctionElement {
+    pub const DUMMY: Self = Self {
+        authored: FunctionElementAuthored::Value(Value::Trivial(value::Trivial)),
+        key: ElementKey::Temp,
+    };
+}
+
 #[derive(Debug)]
 pub struct FunctionScope {
     pub elements: Vec<Id<Element>>,
 }
 
+impl FunctionScope {
+    pub const DUMMY: Self = Self {
+        elements: Default::default(),
+    };
+}
+
 #[derive(Debug)]
 pub struct FunctionOptimized {
-    pub elements: Vec<FunctionElement>,
-    pub scopes: Vec<FunctionScope>,
+    pub elements: KeyVec<Id<Element>, FunctionElement>,
+    pub scopes: KeyVec<Id<Scope>, FunctionScope>,
     pub root_scope: Option<Id<Scope>>,
 }
 

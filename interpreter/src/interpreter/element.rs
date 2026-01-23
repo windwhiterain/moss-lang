@@ -10,7 +10,7 @@ use crate::{
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
 
-#[derive(Clone, Copy, Debug,EnumExtract)]
+#[derive(Clone, Copy, Debug, EnumExtract)]
 pub enum ElementKey {
     Name(StringId),
     Temp,

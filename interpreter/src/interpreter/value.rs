@@ -67,11 +67,7 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Scope, Ctx> {
         let scope = self.ctx.get(self.value.0);
         write!(f, "{{")?;
         for key in scope.elements.keys() {
-            write!(
-                f,
-                "{}, ",
-                self.ctx.id2str(*key).deref(),
-            )?;
+            write!(f, "{}, ", self.ctx.id2str(*key).deref(),)?;
         }
         write!(f, "}}")
     }
@@ -144,8 +140,10 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Param, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let param = self.ctx.get(self.value.0);
         let function = self.ctx.get(param.function);
-        let param_name =  self.ctx.id2str(*self.ctx.get(function.r#in).key.extract_as_name());
-        write!(f, "{}",&*param_name)?;
+        let param_name = self
+            .ctx
+            .id2str(*self.ctx.get(function.r#in).key.extract_as_name());
+        write!(f, "{}", &*param_name)?;
         if let Some(r#type) = param.r#type {
             write!(f, ":")?;
             if r#type.depth > 0 {

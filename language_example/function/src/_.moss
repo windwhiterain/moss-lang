@@ -1,2 +1,3 @@
-f = in -> {a = in;};
-y = f 2;
+f1 = in -> {a = in;};
+f2 = in -> {b = (f1 in).a;};
+t = (f2 4).b;
