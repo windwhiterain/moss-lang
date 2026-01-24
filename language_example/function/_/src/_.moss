@@ -1,0 +1,2 @@
+f = param -> {a = param;};
+value = (f 1).a;

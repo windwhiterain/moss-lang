@@ -135,6 +135,9 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
                 .get_mut()
                 .push(self.run_element(*element_id));
         }
+        log::error!("3 {}",mapped_funcion
+                .captures
+                .get_mut().len());
         mapped_funcion.get_id()
     }
 }
@@ -158,10 +161,15 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyDependContext<'a, IP> {
     }
     fn depend_element(&mut self, element_id: Id<Element>) -> Option<()> {
         let value = self.ip.depend_child_element(self.element_id, element_id)?;
-        if let Value::Scope(value::Scope(scope_id)) = value {
-            self.depend_scope(scope_id)?;
+        match value{
+             Value::Scope(value::Scope(scope_id))=>self.depend_scope(scope_id),
+             Value::Function(value::Function(id))=>self.depend_function(id),
+             _=>Some(()),
         }
-        Some(())
+    }
+    fn depend_function(&mut self,function_id:Id<Function>)->Option<()>{
+        let function = self.ip.get(function_id);
+        self.depend_element(function.body)
     }
 }
 
@@ -197,6 +205,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
             scope_map: Default::default(),
         };
         ctx.body.root_scope = Some(ctx.map_scope(function.scope));
+        log::error!("1 {}",ctx.captures.len());
         Some(Value::FunctionBody(value::FunctionBody(ctx.body.get_id())))
     }
     fn map_scope(&mut self, scope_id: Id<Scope>) -> Id<Scope> {
@@ -285,6 +294,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
         {
             mapped_function.captures.push(self.map_element(element_id));
         }
+        log::error!("2 {}",mapped_function.captures.len());
         self.body.functions.insert(mapped_function)
     }
 }

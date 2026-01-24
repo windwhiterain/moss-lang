@@ -1,0 +1,7 @@
+f1 = param1 -> {
+    f2 = param2 -> {a = param1;};
+};
+f2 = (f1 2).f2;
+f3 = (f1 3).f2;
+value2 = (f2 1).a;
+value3 = (f3 1).a;
