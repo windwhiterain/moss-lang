@@ -1,0 +1,2 @@
+c = mod "c";
+value = c.value;

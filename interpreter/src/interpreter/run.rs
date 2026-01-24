@@ -2,7 +2,7 @@ use type_sitter::{Node, UntypedNode};
 
 use crate::{
     interpreter::{
-        Id, InterpreterLikeMut, Location,
+        Id, InterpreterLikeMut, Location, Managed,
         diagnose::Diagnostic,
         element::Element,
         expr::{self, Expr},
@@ -10,7 +10,7 @@ use crate::{
         scope::Scope,
         value::{self, Value},
     },
-    utils::erase_mut,
+    utils::{erase, erase_mut},
 };
 
 mod buitin_function;
@@ -18,8 +18,7 @@ mod function;
 
 pub struct Context<'a, IP> {
     ip: &'a mut IP,
-    element_id: Id<Element>,
-    scope_id: Id<Scope>,
+    element: &'a Element,
     module_id: ModuleId,
     source: Option<UntypedNode<'static>>,
     expr: &'a mut Expr,
@@ -27,9 +26,8 @@ pub struct Context<'a, IP> {
 
 impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
     pub fn run_value(ip: &'a mut IP, element_id: Id<Element>) -> Option<Value> {
-        let element = ip.get(element_id);
-        let scope_id = element.scope;
-        let module_id = ip.get(scope_id).module;
+        let element = erase(ip).get(element_id);
+        let module_id = element.module;
         let source = element.source.map(|x| x.value_source.upcast());
         let expr = unsafe { erase_mut(ip).get_local_mut(element_id) }
             .expr
@@ -37,8 +35,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
             .unwrap();
         let mut ctx = Self {
             ip,
-            element_id,
-            scope_id,
+            element,
             module_id,
             source,
             expr,
@@ -47,19 +44,22 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
             Expr::Ref(..) => ctx.run_ref(),
             Expr::Find(..) => ctx.run_find(),
             Expr::Call(..) => ctx.run_call(),
-            Expr::FunctionOptimize(..) => function::OptimizeContext::run(&mut ctx),
+            Expr::FunctionBody(..) => function::BodyContext::run(&mut ctx),
             Expr::Value(value) => Some(*value),
         }
     }
     fn run_ref(&mut self) -> Option<Value> {
         let r#ref = self.expr.extract_as_ref();
         self.ip
-            .depend_element(self.element_id, r#ref.element_id, self.source)
+            .depend_element(self.element.get_id(), r#ref.element_id, self.source)
     }
     fn run_find(&mut self) -> Option<Value> {
         let find = self.expr.extract_as_find();
+        let scope_id = self.element.source.as_ref().unwrap().scope;
         let find_element_id = if let Some(target) = find.target {
-            let target = self.ip.depend_child_element(self.element_id, target)?;
+            let target = self
+                .ip
+                .depend_child_element(self.element.get_id(), target)?;
             match target {
                 Value::Scope(value::Scope(scope_id)) => {
                     self.ip.find_element(scope_id, find.name, false)
@@ -68,7 +68,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
                     if let Some(source) = self.source {
                         unsafe {
                             self.ip.diagnose(
-                                Location::Element(self.element_id),
+                                Location::Element(self.element.get_id()),
                                 Diagnostic::CanNotFindIn {
                                     source,
                                     value: target,
@@ -80,7 +80,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
                 }
             }
         } else {
-            self.ip.find_element(self.scope_id, find.name, true)
+            self.ip.find_element(scope_id, find.name, true)
         };
         if let Some(find_element_id) = find_element_id {
             if !find.meta {
@@ -89,7 +89,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
                 });
 
                 self.ip
-                    .depend_element(self.element_id, find_element_id, self.source)
+                    .depend_element(self.element.get_id(), find_element_id, self.source)
             } else {
                 Some(Value::Element(value::Element(find_element_id)))
             }
@@ -97,7 +97,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
             if let Some(source) = self.source {
                 unsafe {
                     self.ip.diagnose(
-                        Location::Element(self.element_id),
+                        Location::Element(self.element.get_id()),
                         Diagnostic::FailedFindElement { source },
                     )
                 };
@@ -109,10 +109,12 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let call = self.expr.extract_as_call();
         let function = self
             .ip
-            .depend_child_element(self.element_id, call.function)?;
+            .depend_child_element(self.element.get_id(), call.function)?;
         match function {
             Value::BuiltinFunction(builtin) => {
-                let param = self.ip.depend_child_element(self.element_id, call.param)?;
+                let param = self
+                    .ip
+                    .depend_child_element(self.element.get_id(), call.param)?;
                 buitin_function::Context::run(self, builtin, param)
             }
             Value::Function(function) => function::CallContext::run(self, function, call.param),

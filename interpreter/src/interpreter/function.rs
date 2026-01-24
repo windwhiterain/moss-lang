@@ -15,6 +15,7 @@ use crate::{
 pub enum FunctionElementAuthored {
     Expr(Expr),
     Value(Value),
+    Capture(usize),
 }
 
 #[derive(Debug)]
@@ -42,40 +43,80 @@ impl FunctionScope {
 }
 
 #[derive(Debug)]
-pub struct FunctionOptimized {
-    pub elements: KeyVec<Id<Element>, FunctionElement>,
+pub struct FunctionFunction {
+    pub body: Id<Element>,
+    pub captures: Vec<Id<Element>>,
+}
+
+impl FunctionFunction {
+    pub fn new(body: Id<Element>) -> Self {
+        Self {
+            body,
+            captures: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct FunctionBody {
     pub scopes: KeyVec<Id<Scope>, FunctionScope>,
+    pub elements: KeyVec<Id<Element>, FunctionElement>,
+    pub functions: KeyVec<Id<Function>, FunctionFunction>,
     pub root_scope: Option<Id<Scope>>,
 }
 
-pub const OPTIMIZED_PARAM: Id<Element> = Id::from_idx(usize::MAX);
+impl FunctionBody {
+    pub const PARAM_ELEMENT_ID: Id<Element> = Id::from_idx(usize::MAX);
+    pub fn new() -> Self {
+        Self {
+            scopes: Default::default(),
+            elements: Default::default(),
+            functions: Default::default(),
+            root_scope: Default::default(),
+        }
+    }
+}
+
+impl Managed for FunctionBody {
+    type Local = ();
+
+    type Onwer = Self;
+
+    const NAME: &str = "FunctionBody";
+
+    fn get_local(&self) -> &UnsafeCell<Self::Local> {
+        todo!()
+    }
+
+    fn get_local_mut(&mut self) -> &mut UnsafeCell<Self::Local> {
+        todo!()
+    }
+
+    fn get_owner(&self) -> super::Owner<Self::Onwer>
+    where
+        Self: Sized,
+    {
+        todo!()
+    }
+}
 
 #[derive(Debug)]
 pub struct Function {
     pub scope: Id<Scope>,
-    pub r#in: Id<Element>,
+    pub param: Id<Element>,
     pub module: ModuleId,
-    pub complete: Id<Element>,
-    pub optimized: UnsafeCell<FunctionOptimized>,
+    pub body: Id<Element>,
+    pub captures: UnsafeCell<Vec<Id<Element>>>,
 }
 
 impl Function {
-    pub fn new(
-        scope: Id<Scope>,
-        r#in: Id<Element>,
-        module: ModuleId,
-        complete: Id<Element>,
-    ) -> Self {
+    pub fn new(scope: Id<Scope>, param: Id<Element>, module: ModuleId, body: Id<Element>) -> Self {
         Self {
             scope,
-            r#in,
+            param,
             module,
-            complete,
-            optimized: UnsafeCell::new(FunctionOptimized {
-                elements: Default::default(),
-                scopes: Default::default(),
-                root_scope: None,
-            }),
+            body,
+            captures: UnsafeCell::new(Default::default()),
         }
     }
 }
@@ -112,6 +153,7 @@ pub struct ParamType {
 #[derive(Debug)]
 pub struct Param {
     pub function: Id<Function>,
+    pub element: Id<Element>,
     pub r#type: Option<ParamType>,
 }
 

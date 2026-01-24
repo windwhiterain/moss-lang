@@ -5,7 +5,8 @@ use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner, diagnose::Diagnostic, expr::Expr, scope::Scope, value::Value,
+        Id, Managed, Owner, diagnose::Diagnostic, expr::Expr, module::ModuleId, scope::Scope,
+        value::Value,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
@@ -35,8 +36,8 @@ impl ElementLocal {
 #[derive(Debug)]
 pub struct Element {
     pub key: ElementKey,
-    pub scope: Id<Scope>,
     pub source: Option<ElementSource>,
+    pub module: ModuleId,
     pub value: OnceLock<Value>,
     pub local: UnsafeCell<ElementLocal>,
 }
@@ -53,23 +54,23 @@ impl Managed for Element {
     fn get_local_mut(&mut self) -> &mut UnsafeCell<Self::Local> {
         &mut self.local
     }
-    type Onwer = Scope;
+    type Onwer = Self;
 
     fn get_owner(&self) -> super::Owner<Self::Onwer>
     where
         Self: Sized,
     {
-        Owner::Managed(self.scope)
+        Owner::Module(self.module)
     }
 }
 
 impl Element {
-    pub fn new<'tree>(key: ElementKey, scope: Id<Scope>) -> Self {
+    pub fn new<'tree>(key: ElementKey, module: ModuleId) -> Self {
         Self {
             key,
             value: Default::default(),
-            scope,
             source: None,
+            module,
             local: UnsafeCell::new(ElementLocal {
                 expr: None,
                 value: None,
@@ -86,11 +87,15 @@ impl Element {
 pub struct ElementSource {
     pub value_source: moss::Value<'static>,
     pub key_source: Option<moss::Name<'static>>,
+    pub scope: Id<Scope>,
 }
 
-#[derive(Debug, Clone)]
-pub enum ElementAuthored {
-    Source(ElementSource),
+#[derive(Debug)]
+pub enum ElementAuthored<'a> {
+    Source {
+        source: ElementSource,
+        scope: &'a mut Scope,
+    },
     Expr(Expr),
     Value(Value),
 }

@@ -106,6 +106,13 @@ impl Display for Function {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FunctionBody(pub Id<function::FunctionBody>);
+impl Display for FunctionBody {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "->{{..}}")
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FunctionType;
 impl Display for FunctionType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -142,7 +149,7 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Param, Ctx> {
         let function = self.ctx.get(param.function);
         let param_name = self
             .ctx
-            .id2str(*self.ctx.get(function.r#in).key.extract_as_name());
+            .id2str(*self.ctx.get(function.param).key.extract_as_name());
         write!(f, "{}", &*param_name)?;
         if let Some(r#type) = param.r#type {
             write!(f, ":")?;
@@ -166,6 +173,7 @@ pub enum Value {
     Element(Element),
     ElementType(ElementType),
     Function(Function),
+    FunctionBody(FunctionBody),
     FunctionType(FunctionType),
     TypeType(TypeType),
     BuiltinFunction(BuiltinFunction),
@@ -218,6 +226,7 @@ impl<'a, Ctx: InterpreterLike + ?Sized> Display for Contexted<'a, Value, Ctx> {
             Value::Element(value) => write!(f, "{}", value.with_ctx(self.ctx)),
             Value::ElementType(value) => write!(f, "{}", value),
             Value::Function(value) => write!(f, "{}", value),
+            Value::FunctionBody(value) => write!(f, "{}", value),
             Value::FunctionType(value) => write!(f, "{}", value),
             Value::TypeType(value) => write!(f, "{}", value),
             Value::BuiltinFunction(value) => write!(f, "{}", value),

@@ -9,6 +9,7 @@ use crate::interpreter::expr::Expr;
 use crate::interpreter::expr::HasRef as _;
 use crate::interpreter::file::File;
 use crate::interpreter::file::FileId;
+use crate::interpreter::function::Function;
 use crate::interpreter::module::Module;
 use crate::interpreter::module::ModuleId;
 use crate::interpreter::module::ModuleLocal;
@@ -36,6 +37,7 @@ use crate::utils::unsafe_cell::UnsafeCell;
 use slotmap::SecondaryMap;
 use slotmap::SlotMap;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::mem;
@@ -209,31 +211,39 @@ impl Interpreter {
         }
     }
     pub fn init(&mut self) {
-        let module = self.add_module(None);
-        let scope = erase_mut(unsafe { self.add_scope(None, None, module) });
-        let mod_id = self.str2id("mod");
-        self.add_element(
-            ElementKey::Name(mod_id),
-            scope,
-            Some(ElementAuthored::Value(Value::BuiltinFunction(
-                BuiltinFunction::Mod,
-            ))),
-        )
-        .unwrap();
-        let diagnose_id = self.str2id("diagnose");
-        self.add_element(
-            ElementKey::Name(diagnose_id),
-            scope,
-            Some(ElementAuthored::Value(Value::BuiltinFunction(
-                BuiltinFunction::Diagnose,
-            ))),
-        )
-        .unwrap();
+        let module_id = self.add_module(None);
+        let scope = erase_mut(unsafe { self.add_scope(None, None, module_id) });
+        let mod_name = self.str2id("mod");
+        let mod_element_id = self
+            .add_element(
+                ElementKey::Name(mod_name),
+                module_id,
+                Some(ElementAuthored::Value(Value::BuiltinFunction(
+                    BuiltinFunction::Mod,
+                ))),
+            )
+            .unwrap()
+            .get_id();
+        let diagnose_name = self.str2id("diagnose");
+        let diagnose_element_id = self
+            .add_element(
+                ElementKey::Name(diagnose_name),
+                module_id,
+                Some(ElementAuthored::Value(Value::BuiltinFunction(
+                    BuiltinFunction::Diagnose,
+                ))),
+            )
+            .unwrap()
+            .get_id();
+        scope.elements = HashMap::from_iter([
+            (mod_name, mod_element_id),
+            (diagnose_name, diagnose_element_id),
+        ]);
         self.set_element_value(
-            self.get_module(module).root_scope.unwrap(),
+            self.get_module(module_id).root_scope.unwrap(),
             Value::Scope(value::Scope(scope.get_id())),
         );
-        self.builtin_module = Some(module);
+        self.builtin_module = Some(module_id);
     }
     pub fn clear(&mut self) {
         self.builtin_module = Default::default();
@@ -251,7 +261,7 @@ impl Interpreter {
     pub fn find_file(&self, path: impl AsRef<Path>) -> Option<FileId> {
         self.path2file.get(path.as_ref()).copied()
     }
-    pub fn find_or_add_file(&mut self, path: Cow<PathBuf>) -> FileId {
+    pub fn find_or_add_file(&mut self, path: &PathBuf) -> FileId {
         match erase_mut(self)
             .path2file
             .raw_entry_mut()
@@ -261,39 +271,43 @@ impl Interpreter {
                 *raw_occupied_entry_mut.get()
             }
             hashbrown::hash_map::RawEntryMut::Vacant(raw_vacant_entry_mut) => {
-                let path = path.into_owned();
                 let file = File::new(path.clone(), self);
                 let file_id = self.files.insert(file);
-                raw_vacant_entry_mut.insert(path, file_id);
+                raw_vacant_entry_mut.insert(path.clone(), file_id);
                 file_id
             }
         }
     }
     pub fn add_module(&mut self, path: Option<PathBuf>) -> ModuleId {
         let resolved = path.is_none();
-        let authored = if let Some(path) = path {
-            let file_id = self.find_or_add_file(Cow::Owned(path));
+        let (authored, file_id) = if let Some(path) = &path {
+            let file_id = self.find_or_add_file(path);
             let file = erase_mut(self).get_file(file_id);
-            Some(ScopeAuthored {
-                source: ScopeSource::File(file.tree.root_node().unwrap()),
-                file: file_id,
-            })
+            (
+                Some(ScopeAuthored {
+                    source: ScopeSource::File(file.tree.root_node().unwrap()),
+                    file: file_id,
+                }),
+                Some(file_id),
+            )
         } else {
-            None
+            (None, None)
         };
 
-        let id = self.modules.insert(Module::new(authored, resolved));
+        let id = self
+            .modules
+            .insert(Module::new(authored, resolved, file_id));
         if let Some(authored) = authored {
             self.get_file_mut(authored.file).is_module = Some(id);
             self.unresolved_modules.push(id);
             self.increase_workload();
         }
-        let builtin_scope = unsafe { erase_mut(self).add_scope(None, None, id) };
-        let root_scope = self
-            .add_element(ElementKey::Temp, builtin_scope, None)
-            .unwrap();
+        let root_scope_element_id = self
+            .add_element(ElementKey::Temp, id, None)
+            .unwrap()
+            .get_id();
         let module = self.modules.get_mut(id).unwrap();
-        module.root_scope = Some(root_scope);
+        module.root_scope = Some(root_scope_element_id);
         id
     }
     pub async fn run(&mut self) {
@@ -377,9 +391,13 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
     async fn run(&mut self) {
         let modules = &mut erase_mut(self).get_thread_local_mut(self.thread).modules;
         log::error!(
-            "run thread(: {:?}, modules_num: {}",
+            "run thread(: {:?}, modules: {:?}",
             self.thread,
-            modules.len()
+            modules
+                .iter()
+                .filter_map(|x| self.get_module(*x).file)
+                .map(|x| self.get_file(x).path.display())
+                .collect::<Vec<_>>()
         );
         let mut unresolved_num = modules.len();
         for module_id in modules.iter().copied() {
@@ -393,13 +411,14 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
         let terminate = mem::take(&mut self.workload_zero).unwrap();
         let mut run_signal = async || {
             loop {
-                if unresolved_num == 0 {
-                    log::error!("run thread): unresolved_num, {:?}", self.thread);
-                    break;
-                }
                 if let Some(signal) = thread.channel.pop() {
                     match signal {
                         Signal::Depend(depend) => {
+                            log::error!(
+                                "thread {:?}: receive depend on {}",
+                                self.thread,
+                                value::Element(depend.dependency).with_ctx(self)
+                            );
                             self.depend_element_raw(
                                 depend.dependant,
                                 depend.dependency,
@@ -408,6 +427,11 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                             );
                         }
                         Signal::Resolve(local_element_id) => {
+                            log::error!(
+                                "thread {:?}: receive resolve on {}",
+                                self.thread,
+                                value::Element(local_element_id).with_ctx(self)
+                            );
                             self.resolve_element(local_element_id);
                         }
                     }
@@ -415,20 +439,27 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                 } else {
                     match thread.channel.async_pop().await {
                         Signal::Depend(depend) => {
-                            unsafe {
-                                self.get_local_mut(depend.dependency)
-                                    .dependants
-                                    .push(Dependant {
-                                        element_id: depend.dependant,
-                                        source: depend.source,
-                                    })
-                            };
+                            log::error!(
+                                "thread {:?}: receive depend on {}",
+                                self.thread,
+                                value::Element(depend.dependency).with_ctx(self)
+                            );
+                            self.depend_element_raw(
+                                depend.dependant,
+                                depend.dependency,
+                                depend.source,
+                                false,
+                            );
                         }
                         Signal::Resolve(local_element_id) => {
+                            log::error!(
+                                "thread {:?}: receive resolve on {}",
+                                self.thread,
+                                value::Element(local_element_id).with_ctx(self)
+                            );
                             self.resolve_element(local_element_id);
                         }
                     }
-                    log::error!("async_pop: thread: {:?}", self.thread);
                     self.decrease_workload();
                 }
             }
@@ -436,7 +467,7 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
         tokio::select! {
             _ = run_signal()=>{},
             _=terminate=>{
-                log::error!("run thread): workload_zero, {:?}", self.thread);
+                log::error!("run thread): {:?}", self.thread);
             }
         }
     }
@@ -451,6 +482,8 @@ pub enum Location {
     Scope(Id<Scope>),
 }
 pub trait InterpreterLike: Sized {
+    fn thread(&self) -> ThreadId;
+
     fn is_concurrent(&self) -> bool;
     fn is_local_module(&self, id: ModuleId) -> bool;
     fn is_remote_module(&self, id: ModuleId) -> bool;
@@ -710,7 +743,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         &mut self,
         parent: Option<Id<Scope>>,
         authored: Option<ScopeAuthored>,
-        module: ModuleId,
+        module_id: ModuleId,
     ) -> &mut Scope {
         let depth = if let Some(parent) = parent {
             self.get(parent).depth + 1
@@ -718,10 +751,10 @@ pub trait InterpreterLikeMut: InterpreterLike {
             0
         };
         let scope = unsafe {
-            self.get_module_local_mut(module)
+            self.get_module_local_mut(module_id)
                 .pools
                 .get_mut::<Scope>()
-                .insert(Scope::new(parent, authored, module, depth))
+                .insert(Scope::new(parent, authored, module_id, depth))
         };
         let scope_id = scope.get_id();
         let scope = erase_mut(scope);
@@ -731,6 +764,11 @@ pub trait InterpreterLikeMut: InterpreterLike {
         }
         if let Some(authored) = authored {
             let mut cursor = erase_struct!(self.get_file(authored.file).tree.walk());
+
+            let source = match authored.source {
+                ScopeSource::Scope(scope) => scope.upcast(),
+                ScopeSource::File(source_file) => source_file.upcast(),
+            };
 
             let assigns = if let ScopeSource::Scope(scope) = authored.source {
                 Some(scope.assigns(erase_mut(&mut cursor)))
@@ -750,7 +788,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
             );
 
             for assign in assigns {
-                log::error!("assign: {assign:?}");
                 let Some(assign) =
                     (unsafe { self.grammar_error(Location::Scope(scope_id), assign) })
                 else {
@@ -769,11 +806,26 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 };
 
                 let name = self.get_source_str_id(&key, authored.file);
-                let element_authored = ElementAuthored::Source(ElementSource {
-                    value_source: erase_struct!(value),
-                    key_source: Some(erase_struct!(key)),
-                });
-                let _ = self.add_element(ElementKey::Name(name), scope, Some(element_authored));
+                let element_authored = ElementAuthored::Source {
+                    source: ElementSource {
+                        scope: scope_id,
+                        value_source: erase_struct!(value),
+                        key_source: Some(erase_struct!(key)),
+                    },
+                    scope,
+                };
+                if let Ok(element) =
+                    self.add_element(ElementKey::Name(name), module_id, Some(element_authored))
+                {
+                    scope.elements.insert(name, element.get_id());
+                } else {
+                    unsafe {
+                        self.diagnose(
+                            Location::Scope(scope.get_id()),
+                            Diagnostic::RedundantElementKey { source },
+                        )
+                    };
+                }
             }
         }
         scope
@@ -781,66 +833,14 @@ pub trait InterpreterLikeMut: InterpreterLike {
     fn add_element(
         &mut self,
         key: ElementKey,
-        scope: &mut Scope,
+        module_id: ModuleId,
         authored: Option<ElementAuthored>,
-    ) -> Result<Id<Element>, ()> {
-        struct Context<'a, IP: ?Sized> {
-            interpreter: &'a mut IP,
-            key: ElementKey,
-            scope: &'a mut Scope,
-            authored: Option<ElementAuthored>,
-        }
-        let mut ctx = Context {
-            interpreter: self,
-            key,
-            scope,
-            authored,
-        };
-
-        impl<'a, IP: InterpreterLikeMut + ?Sized> Context<'a, IP> {
-            fn add_raw(&mut self) -> &mut Element {
-                let value = unsafe { self.interpreter.get_module_local_mut(self.scope.module) }
-                    .pools
-                    .get_mut::<Element>()
-                    .insert(Element::new(self.key, self.scope.get_id()));
-                value
-            }
-            fn add(&mut self) -> Option<&mut Element> {
-                match self.key {
-                    ElementKey::Name(name) => match erase_mut(self).scope.elements.entry(name) {
-                        std::collections::hash_map::Entry::Occupied(_occupied_entry) => {
-                            if let Some(authored) = &self.authored {
-                                if let ElementAuthored::Source(source) = authored {
-                                    let source = if let Some(key_source) = source.key_source {
-                                        key_source.upcast()
-                                    } else {
-                                        source.value_source.upcast()
-                                    };
-                                    unsafe {
-                                        self.interpreter.diagnose(
-                                            Location::Scope(self.scope.get_id()),
-                                            Diagnostic::RedundantElementKey { source },
-                                        )
-                                    };
-                                }
-                            }
-                            return None;
-                        }
-                        std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                            let id = self.add_raw();
-                            vacant_entry.insert(id.get_id());
-                            Some(id)
-                        }
-                    },
-                    ElementKey::Temp => Some(self.add_raw()),
-                }
-            }
-        }
-        let element = erase_mut(ctx.add().ok_or(())?);
+    ) -> Result<&mut Element, ()> {
+        let element = unsafe { erase_mut(self).add(Element::new(key, module_id), module_id) };
         'unresolve: {
-            if let Some(authored) = ctx.authored {
+            if let Some(authored) = authored {
                 match authored {
-                    ElementAuthored::Source(source) => {
+                    ElementAuthored::Source { source, scope } => {
                         element.source = Some(source);
                         let expr = unsafe {
                             self.parse_value(Ok(source.value_source), element.get_id(), scope)
@@ -860,12 +860,10 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     }
                 }
             }
-            let module = unsafe { self.get_module_local_mut(scope.module) };
+            let module = unsafe { self.get_module_local_mut(module_id) };
             module.unresolved_count += 1;
-            let unresolved_count = module.unresolved_count;
-            log::error!("{:?}: add {}", element.get_id(), unresolved_count);
         }
-        Ok(element.get_id())
+        Ok(element)
     }
     /// # Safety
     /// - `element_id` is local.
@@ -917,7 +915,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
     /// # Safety
     /// - `module_id` is local.
     unsafe fn run_module(&mut self, module_id: ModuleId) {
-        log::error!("run module(: {:?}", module_id);
         let module_local = unsafe { erase_mut(self).get_module_local_mut(module_id) };
         let root_scope_element = self.get_module(module_id).root_scope.unwrap();
         if let Some(authored) = module_local.authored {
@@ -933,7 +930,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
             }
             self.decrease_workload();
         }
-        log::error!("run module): {:?}", module_id);
     }
     unsafe fn run_module_scope(&mut self, scope_id: Id<Scope>, module_id: ModuleId) {
         let scope = erase(self).get(scope_id);
@@ -952,7 +948,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     Value::Scope(scope) => self.run_module_scope(scope.0, module_id),
                     Value::Function(function) => {
                         let function = self.get(function.0);
-                        self.run_module_element(function.complete, module_id);
+                        self.run_module_element(function.body, module_id);
                     }
                     _ => (),
                 };
@@ -963,12 +959,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
     /// - `element_id` is local.
     unsafe fn run_element(&mut self, element_id: Id<Element>) -> Option<Value> {
         let element_local = unsafe { self.get_local_mut(element_id) };
-
-        log::error!(
-            "{element_id:?}: resolved: {}, dependencies_len: {}",
-            element_local.is_resolved(),
-            element_local.dependants.len()
-        );
 
         if element_local.is_running {
             return None;
@@ -1022,11 +1012,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
             element.value = OnceLock::from(value);
         }
 
-        let module =
-            unsafe { self.get_module_local_mut(self.get(self.get(element_id).scope).module) };
+        let module = unsafe { self.get_module_local_mut(self.get_module_of(element_id)) };
         module.unresolved_count -= 1;
-        let unresolved_count = module.unresolved_count;
-        log::error!("{:?}: set {}", element_id, unresolved_count);
 
         let element_local = unsafe { self.get_local_mut(element_id) };
         for dependant in mem::take(&mut element_local.dependants) {
@@ -1055,7 +1042,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 }
             } else {
                 if dependency.is_resolved() {
-                    self.resolve_element(dependency_id);
+                    self.resolve_element(dependant_id);
                     return None;
                 }
             }
@@ -1071,6 +1058,11 @@ pub trait InterpreterLikeMut: InterpreterLike {
             let dependant_local = unsafe { self.get_local_mut(dependant_id) };
             dependant_local.dependency_count += 1;
             if let Some(thread) = self.get_thread_remote_of(dependency_id) {
+                log::error!(
+                    "thread {:?}: send depend on {}",
+                    self.thread(),
+                    value::Element(dependency_id).with_ctx(self)
+                );
                 thread.channel.push(Signal::Depend(Depend {
                     dependant: dependant_id,
                     dependency: dependency_id,
@@ -1087,13 +1079,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         dependency_id: Id<Element>,
         source: Option<UntypedNode<'static>>,
     ) -> Option<Value> {
-        let v = self.depend_element_raw(dependant_id, dependency_id, source, true);
-        log::error!(
-            "depend {} got {}",
-            value::Element(dependency_id).with_ctx(self),
-            v.unwrap_or(Value::Error(value::Error)).with_ctx(self)
-        );
-        v
+        self.depend_element_raw(dependant_id, dependency_id, source, true)
     }
     /// # Panic
     /// - when concurrent, any element is not in local thread.
@@ -1115,6 +1101,11 @@ pub trait InterpreterLikeMut: InterpreterLike {
             unsafe { self.run_element(id) };
         } else {
             let thread = self.get_thread_remote_of(id).unwrap();
+            log::error!(
+                "thread {:?}: send resolve on {}",
+                self.thread(),
+                value::Element(id).with_ctx(self)
+            );
             thread.channel.push(Signal::Resolve(id));
             self.increase_workload();
         }
@@ -1169,6 +1160,10 @@ impl InterpreterLike for Interpreter {
 
     fn get_builtin_module(&self) -> ModuleId {
         self.builtin_module.unwrap()
+    }
+
+    fn thread(&self) -> ThreadId {
+        todo!()
     }
 }
 
@@ -1225,6 +1220,10 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadedInterprete
     fn get_builtin_module(&self) -> ModuleId {
         self.interpreter.get_builtin_module()
     }
+
+    fn thread(&self) -> ThreadId {
+        self.thread
+    }
 }
 
 impl InterpreterLikeMut for Interpreter {
@@ -1251,13 +1250,11 @@ impl InterpreterLikeMut for Interpreter {
     fn increase_workload(&mut self) {
         let workload = self.concurrent.workload.get_mut();
         *workload += 1;
-        log::error!("inc workload: {}", workload);
     }
 
     fn decrease_workload(&mut self) -> usize {
         let workload = self.concurrent.workload.get_mut();
         *workload -= 1;
-        log::error!("dec workload: {}", workload);
         *workload
     }
 }
@@ -1304,7 +1301,6 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
             .workload
             .fetch_add(1, Ordering::Relaxed)
             + 1;
-        log::error!("inc workload: {}", ret);
     }
 
     fn decrease_workload(&mut self) -> usize {
@@ -1317,7 +1313,6 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
         if ret == 0 {
             self.interpreter.concurrent.workload_zero.notify_waiters();
         }
-        log::error!("dec workload: {}", ret);
         ret
     }
 }

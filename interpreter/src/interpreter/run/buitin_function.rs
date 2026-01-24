@@ -30,7 +30,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
     ) -> Option<Value> {
         let mut ctx = Self {
             ip: ctx.ip,
-            element_id: ctx.element_id,
+            element_id: ctx.element.get_id(),
             module_id: ctx.module_id,
             source: ctx.source,
             param,
@@ -47,6 +47,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
                     self.ip.add(
                         Param {
                             function,
+                            element: self.element_id,
                             r#type: None,
                         },
                         self.module_id,

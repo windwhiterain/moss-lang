@@ -49,24 +49,34 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             .ip
             .add_element(
                 ElementKey::Temp,
-                self.scope,
-                Some(ElementAuthored::Source(ElementSource {
-                    value_source: func,
-                    key_source: None,
-                })),
+                self.scope.module,
+                Some(ElementAuthored::Source {
+                    source: ElementSource {
+                        scope: self.scope.get_id(),
+                        value_source: func,
+                        key_source: None,
+                    },
+                    scope: self.scope,
+                }),
             )
-            .unwrap();
+            .unwrap()
+            .get_id();
         let param_element = self
             .ip
             .add_element(
                 ElementKey::Temp,
-                self.scope,
-                Some(ElementAuthored::Source(ElementSource {
-                    value_source: param,
-                    key_source: None,
-                })),
+                self.scope.module,
+                Some(ElementAuthored::Source {
+                    source: ElementSource {
+                        scope: self.scope.get_id(),
+                        value_source: param,
+                        key_source: None,
+                    },
+                    scope: self.scope,
+                }),
             )
-            .unwrap();
+            .unwrap()
+            .get_id();
         Some(Expr::Call(expr::Call {
             function: func_element,
             param: param_element,
@@ -131,13 +141,18 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                 self.ip
                     .add_element(
                         ElementKey::Temp,
-                        self.scope,
-                        Some(ElementAuthored::Source(ElementSource {
-                            value_source: target,
-                            key_source: None,
-                        })),
+                        self.scope.module,
+                        Some(ElementAuthored::Source {
+                            source: ElementSource {
+                                scope: self.scope.get_id(),
+                                value_source: target,
+                                key_source: None,
+                            },
+                            scope: self.scope,
+                        }),
                     )
-                    .unwrap(),
+                    .unwrap()
+                    .get_id(),
             )
         } else {
             None
@@ -200,16 +215,16 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
         ))))
     }
     fn parse_function(&mut self, function: moss::Function<'static>) -> Option<Expr> {
-        let (r#in, scope) = unsafe {
-            let r#in = self
+        let (param_name, scope) = unsafe {
+            let param_name = self
                 .ip
                 .grammar_error(Location::Element(self.element_id), function.param())?;
             let scope = self
                 .ip
                 .grammar_error(Location::Element(self.element_id), function.scope())?;
-            (r#in, scope)
+            (param_name, scope)
         };
-        let r#in = self.ip.get_source_str_id(&r#in, self.file_id);
+        let param_name = self.ip.get_source_str_id(&param_name, self.file_id);
 
         let scope = unsafe {
             // SAFETY: element -> scope
@@ -234,38 +249,45 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             ));
 
         let param = unsafe {
-            self.ip.add(
+            erase_mut(self).ip.add(
                 Param {
                     function: function.get_id(),
+                    element: Id::DUMMY,
                     r#type: None,
                 },
                 self.scope.module,
             )
-        }
-        .get_id();
-        let r#in = self
+        };
+        let param_element_id = self
             .ip
             .add_element(
-                ElementKey::Name(r#in),
-                scope,
-                Some(ElementAuthored::Value(Value::Param(value::Param(param)))),
+                ElementKey::Name(param_name),
+                scope.module,
+                Some(ElementAuthored::Value(Value::Param(value::Param(
+                    param.get_id(),
+                )))),
             )
-            .ok()?;
+            .ok()?
+            .get_id();
+        scope.elements.insert(param_name, param_element_id);
 
-        let complete = self
+        param.element = param_element_id;
+
+        let body_element_id = self
             .ip
             .add_element(
                 ElementKey::Temp,
-                scope,
-                Some(ElementAuthored::Expr(Expr::FunctionOptimize(
-                    expr::FunctionOptimize {
+                scope.module,
+                Some(ElementAuthored::Expr(Expr::FunctionBody(
+                    expr::FunctionBody {
                         function: function.get_id(),
                     },
                 ))),
             )
-            .ok()?;
-        function.complete = complete;
-        function.r#in = r#in;
+            .ok()?
+            .get_id();
+        function.body = body_element_id;
+        function.param = param_element_id;
         Some(Expr::Value(Value::Function(value::Function(
             function.get_id(),
         ))))

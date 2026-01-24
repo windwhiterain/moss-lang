@@ -1,0 +1,4 @@
+value = 1;
+
+a = mod "a";
+value2 = a.value;

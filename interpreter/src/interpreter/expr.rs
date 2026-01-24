@@ -65,11 +65,11 @@ impl HasRef for Call {
 }
 
 #[derive(Clone, Debug)]
-pub struct FunctionOptimize {
+pub struct FunctionBody {
     pub function: Id<Function>,
 }
 
-impl HasRef for FunctionOptimize {}
+impl HasRef for FunctionBody {}
 
 impl HasRef for Value {
     fn map_ref(&mut self, mut map: impl FnMut(Id<Element>) -> Id<Element>) {
@@ -92,7 +92,7 @@ pub enum Expr {
     Ref(Ref),
     Find(Find),
     Call(Call),
-    FunctionOptimize(FunctionOptimize),
+    FunctionBody(FunctionBody),
     Value(Value),
 }
 
@@ -102,7 +102,7 @@ impl HasRef for Expr {
             Expr::Ref(value) => value.map_ref(map),
             Expr::Find(value) => value.map_ref(map),
             Expr::Call(value) => value.map_ref(map),
-            Expr::FunctionOptimize(value) => value.map_ref(map),
+            Expr::FunctionBody(value) => value.map_ref(map),
             Expr::Value(value) => value.map_ref(map),
         }
     }
@@ -112,7 +112,7 @@ impl HasRef for Expr {
             Expr::Ref(value) => value.iter_ref(map),
             Expr::Find(value) => value.iter_ref(map),
             Expr::Call(value) => value.iter_ref(map),
-            Expr::FunctionOptimize(value) => value.iter_ref(map),
+            Expr::FunctionBody(value) => value.iter_ref(map),
             Expr::Value(value) => value.iter_ref(map),
         }
     }
