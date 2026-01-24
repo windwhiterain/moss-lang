@@ -41,7 +41,7 @@
     zed --foreground
     ```
 5. install [zed extension](zed-extension) in Zed via `Extensins/Install Dev Extension`.
-6. restart Zed, open [example Moss project](language_example/hallo_world).
+6. restart Zed, open [example Moss project](language_example/_).
    
 
 ## Why Moss?
