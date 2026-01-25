@@ -20,7 +20,6 @@ use tower_lsp::{
 use moss_interpreter::{
     interpreter::{
         Id, Interpreter, InterpreterLike, Node, SRC_FILE_EXTENSION, UntypedNode,
-        diagnose::Diagnostic,
         file::FileId,
         scope::Scope,
         value::{self, Value},

@@ -1,7 +1,5 @@
 use std::fmt::Display;
 
-use type_sitter::UntypedNode;
-
 use crate::{
     interpreter::{InterpreterLike, value::Value},
     utils::{

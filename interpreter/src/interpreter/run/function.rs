@@ -273,9 +273,17 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
                         let id = self.map_function(id);
                         FunctionElementAuthored::Value(Value::Function(value::Function(id)))
                     }
-                    Value::Element(value::Element(id)) => FunctionElementAuthored::Value(
-                        Value::Element(value::Element(self.map_element(id))),
-                    ),
+                    Value::Element(value::Element(id)) => {
+                        let element = unsafe { self.ip.get_local(id) };
+                        let id = if let Value::Param(param) = element.value.unwrap() {
+                            self.ip.get(param.0).element
+                        } else {
+                            id
+                        };
+                        FunctionElementAuthored::Value(Value::Element(value::Element(
+                            self.map_element(id),
+                        )))
+                    }
                     _ => FunctionElementAuthored::Value(value),
                 }
             },

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use type_sitter::{Node as _, UntypedNode};
+use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{

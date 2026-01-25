@@ -893,7 +893,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
     ) -> Option<T> {
         match result {
             Ok(source) => Some(source),
-            Err(err) => {
+            Err(_err) => {
                 unsafe { self.diagnose(location, Diagnostic::GrammarError {}) };
                 None
             }
@@ -1282,12 +1282,10 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpr
     }
 
     fn increase_workload(&mut self) {
-        let ret = self
-            .interpreter
+        self.interpreter
             .concurrent
             .workload
-            .fetch_add(1, Ordering::Relaxed)
-            + 1;
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     fn decrease_workload(&mut self) -> usize {
