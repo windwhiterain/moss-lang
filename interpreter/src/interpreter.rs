@@ -220,7 +220,6 @@ impl Interpreter {
                     BuiltinFunction::Mod,
                 ))),
             )
-            .unwrap()
             .get_id();
         let diagnose_name = self.str2id("diagnose");
         let diagnose_element_id = self
@@ -231,7 +230,6 @@ impl Interpreter {
                     BuiltinFunction::Diagnose,
                 ))),
             )
-            .unwrap()
             .get_id();
         scope.elements = HashMap::from_iter([
             (mod_name, mod_element_id),
@@ -300,10 +298,7 @@ impl Interpreter {
             self.unresolved_modules.push(id);
             self.increase_workload();
         }
-        let root_scope_element_id = self
-            .add_element(ElementKey::Temp, id, None)
-            .unwrap()
-            .get_id();
+        let root_scope_element_id = self.add_element(ElementKey::Temp, id, None).get_id();
         let module = self.modules.get_mut(id).unwrap();
         module.root_scope = Some(root_scope_element_id);
         id
@@ -763,11 +758,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
         if let Some(authored) = authored {
             let mut cursor = erase_struct!(self.get_file(authored.file).tree.walk());
 
-            let source = match authored.source {
-                ScopeSource::Scope(scope) => scope.upcast(),
-                ScopeSource::File(source_file) => source_file.upcast(),
-            };
-
             let assigns = if let ScopeSource::Scope(scope) = authored.source {
                 Some(scope.assigns(erase_mut(&mut cursor)))
             } else {
@@ -812,16 +802,11 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     },
                     scope,
                 };
-                if let Ok(element) =
-                    self.add_element(ElementKey::Name(name), module_id, Some(element_authored))
-                {
-                    scope.elements.insert(name, element.get_id());
-                } else {
+                let element =
+                    self.add_element(ElementKey::Name(name), module_id, Some(element_authored));
+                if let Some(id) = scope.elements.insert(name, element.get_id()) {
                     unsafe {
-                        self.diagnose(
-                            Location::Scope(scope.get_id()),
-                            Diagnostic::RedundantElementKey { source },
-                        )
+                        self.diagnose(Location::Element(id), Diagnostic::RedundantElementKey {})
                     };
                 }
             }
@@ -833,7 +818,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         key: ElementKey,
         module_id: ModuleId,
         authored: Option<ElementAuthored>,
-    ) -> Result<&mut Element, ()> {
+    ) -> &mut Element {
         let element = unsafe { erase_mut(self).add(Element::new(key, module_id), module_id) };
         'unresolve: {
             if let Some(authored) = authored {
@@ -845,6 +830,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                         };
                         let element_local = element.local.get_mut();
                         element_local.expr = expr;
+                        scope.temp_elements.push(element.get_id());
                     }
                     ElementAuthored::Value(value) => {
                         let element_local = element.local.get_mut();
@@ -861,7 +847,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             let module = unsafe { self.get_module_local_mut(module_id) };
             module.unresolved_count += 1;
         }
-        Ok(element)
+        element
     }
     /// # Safety
     /// - `element_id` is local.
@@ -898,14 +884,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         match result {
             Ok(source) => Some(source),
             Err(err) => {
-                unsafe {
-                    self.diagnose(
-                        location,
-                        Diagnostic::GrammarError {
-                            source: err.node.upcast(),
-                        },
-                    )
-                };
+                unsafe { self.diagnose(location, Diagnostic::GrammarError {}) };
                 None
             }
         }

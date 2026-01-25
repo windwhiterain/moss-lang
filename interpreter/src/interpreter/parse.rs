@@ -59,7 +59,6 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                     scope: self.scope,
                 }),
             )
-            .unwrap()
             .get_id();
         let param_element = self
             .ip
@@ -75,7 +74,6 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                     scope: self.scope,
                 }),
             )
-            .unwrap()
             .get_id();
         Some(Expr::Call(expr::Call {
             function: func_element,
@@ -151,7 +149,6 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                             scope: self.scope,
                         }),
                     )
-                    .unwrap()
                     .get_id(),
             )
         } else {
@@ -190,9 +187,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                             unsafe {
                                 erase_mut(self).ip.diagnose(
                                     Location::Element(self.element_id),
-                                    Diagnostic::StringEscapeError {
-                                        source: string_escape.upcast(),
-                                    },
+                                    Diagnostic::StringEscapeError {},
                                 )
                             };
                             None
@@ -267,7 +262,6 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                     param.get_id(),
                 )))),
             )
-            .ok()?
             .get_id();
         scope.elements.insert(param_name, param_element_id);
 
@@ -284,7 +278,6 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                     },
                 ))),
             )
-            .ok()?
             .get_id();
         function.body = body_element_id;
         function.param = param_element_id;

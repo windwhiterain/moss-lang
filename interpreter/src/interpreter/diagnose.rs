@@ -1,37 +1,44 @@
+use std::fmt::Display;
+
 use type_sitter::UntypedNode;
 
-use crate::{interpreter::value::Value, utils::concurrent_string_interner::StringId};
+use crate::{
+    interpreter::{InterpreterLike, value::Value},
+    utils::{
+        concurrent_string_interner::StringId,
+        contexted::{Contexted, WithContext},
+    },
+};
 
 #[derive(Clone, Debug)]
 pub enum Diagnostic {
-    GrammarError {
-        source: UntypedNode<'static>,
-    },
-    RedundantElementKey {
-        source: UntypedNode<'static>,
-    },
-    FailedFindElement {
-        source: UntypedNode<'static>,
-    },
-    FialedFindElementOrPrivateElement {
-        source: UntypedNode<'static>,
-    },
-    CanNotFindIn {
-        source: UntypedNode<'static>,
-        value: Value,
-    },
-    CanNotCallOn {
-        source: UntypedNode<'static>,
-        value: Value,
-    },
-    PathError {
-        source: UntypedNode<'static>,
-    },
-    StringEscapeError {
-        source: UntypedNode<'static>,
-    },
-    Custom {
-        source: UntypedNode<'static>,
-        text: StringId,
-    },
+    GrammarError {},
+    RedundantElementKey {},
+    FailedFindElement {},
+    FialedFindElementOrPrivateElement {},
+    CanNotFindIn { value: Value },
+    CanNotCallOn { value: Value },
+    StringEscapeError {},
+    Custom { text: StringId },
+}
+
+impl<'a, IP: InterpreterLike> Display for Contexted<'a, Diagnostic, IP> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.value {
+            Diagnostic::GrammarError {} => write!(f, "grammar error"),
+            Diagnostic::RedundantElementKey {} => write!(f, "redundant element key"),
+            Diagnostic::FailedFindElement {} => write!(f, "failed find element"),
+            Diagnostic::FialedFindElementOrPrivateElement {} => {
+                write!(f, "failed find element or private element")
+            }
+            Diagnostic::CanNotFindIn { value } => {
+                write!(f, "can not find in {}", value.with_ctx(self.ctx))
+            }
+            Diagnostic::CanNotCallOn { value } => {
+                write!(f, "caan not call on {}", value.with_ctx(self.ctx))
+            }
+            Diagnostic::StringEscapeError {} => write!(f, "string escape errorr"),
+            Diagnostic::Custom { text } => write!(f, "{}", &*self.ctx.id2str(*text)),
+        }
+    }
 }

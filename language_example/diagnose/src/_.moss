@@ -1,5 +1,6 @@
 a = 1;
 diagnostic = diagnose {on = 1; source = @a; text = "should be 2";};
 
-my_diagnose = param -> {diagnostic = diagnose {on = param; source = @param; text = "true";};};
-diagnostic1 = my_diagnose 3;
+my_diagnose = param -> {diagnostic = diagnose {on = param; source = @param; text = "should be 0";};};
+diagnostic1 = my_diagnose 1;
+diagnostic2 = my_diagnose 0;

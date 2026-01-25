@@ -101,7 +101,9 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
                     Value::Function(value::Function(id)) => {
                         Value::Function(value::Function(self.run_function(id)))
                     }
-                    Value::Element(value::Element(id))=>Value::Element(value::Element(self.run_element(id))),
+                    Value::Element(value::Element(id)) => {
+                        Value::Element(value::Element(self.run_element(id)))
+                    }
                     _ => *value,
                 };
                 ElementAuthored::Value(value)
@@ -114,7 +116,6 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         let mapped_id = self
             .ip
             .add_element(function_element.key, self.module_id, Some(authored))
-            .unwrap()
             .get_id();
         if self.element_map.len() <= id.to_idx() {
             self.element_map.resize(id.to_idx() + 1, Default::default());
@@ -272,7 +273,9 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
                         let id = self.map_function(id);
                         FunctionElementAuthored::Value(Value::Function(value::Function(id)))
                     }
-                    Value::Element(value::Element(id))=>FunctionElementAuthored::Value(Value::Element(value::Element(self.map_element(id)))),
+                    Value::Element(value::Element(id)) => FunctionElementAuthored::Value(
+                        Value::Element(value::Element(self.map_element(id))),
+                    ),
                     _ => FunctionElementAuthored::Value(value),
                 }
             },

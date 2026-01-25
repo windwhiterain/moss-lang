@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use type_sitter::{Node, UntypedNode};
+
 use crate::{
     interpreter::{
         Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId, module::ModuleId,
@@ -16,6 +18,7 @@ pub struct ScopeLocal {
 #[derive(Debug)]
 pub struct Scope {
     pub elements: HashMap<StringId, Id<Element>>,
+    pub temp_elements: Vec<Id<Element>>,
     pub parent: Option<Id<Scope>>,
     pub authored: Option<ScopeAuthored>,
     pub module: ModuleId,
@@ -55,6 +58,7 @@ impl Scope {
     ) -> Self {
         Self {
             elements: Default::default(),
+            temp_elements: Default::default(),
             parent,
             authored,
             module,
@@ -74,6 +78,15 @@ impl Scope {
 pub enum ScopeSource {
     Scope(moss::Scope<'static>),
     File(moss::SourceFile<'static>),
+}
+
+impl ScopeSource {
+    pub fn source(&self) -> UntypedNode<'static> {
+        match self {
+            ScopeSource::Scope(scope) => scope.upcast(),
+            ScopeSource::File(source_file) => source_file.upcast(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

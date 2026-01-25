@@ -117,16 +117,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             unsafe {
                 self.ip.diagnose(
                     Location::Element(source_element),
-                    Diagnostic::Custom {
-                        source: {let source = self
-                            .ip
-                            .get(source_element)
-                            .source
-                            .as_ref()
-                            .unwrap();
-                            source.key_source.map(|x|x.upcast()).unwrap_or(source.value_source.upcast())},
-                        text,
-                    },
+                    Diagnostic::Custom { text },
                 )
             };
         }

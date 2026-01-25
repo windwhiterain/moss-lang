@@ -186,19 +186,17 @@ impl Value {
     pub fn merge_param(
         self,
         ctx: &(impl InterpreterLike + ?Sized),
-        ret: &mut Option<Id<function::Function>>
+        ret: &mut Option<Id<function::Function>>,
     ) {
         if let Value::Param(param) = self {
             let function = ctx.get(param.0).function;
             if let Some(ret) = ret {
                 if *ret != function {
-                    if ctx.get(ctx.get(*ret).scope).depth
-                        < ctx.get(ctx.get(function).scope).depth
-                    {
+                    if ctx.get(ctx.get(*ret).scope).depth < ctx.get(ctx.get(function).scope).depth {
                         *ret = function;
                     }
                 }
-            }else{
+            } else {
                 *ret = Some(function);
             }
         }

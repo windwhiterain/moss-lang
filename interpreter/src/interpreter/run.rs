@@ -64,17 +64,12 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
                     self.ip.find_element(scope_id, find.name, false)
                 }
                 _ => {
-                    if let Some(source) = self.source {
-                        unsafe {
-                            self.ip.diagnose(
-                                Location::Element(self.element.get_id()),
-                                Diagnostic::CanNotFindIn {
-                                    source,
-                                    value: target,
-                                },
-                            )
-                        };
-                    }
+                    unsafe {
+                        self.ip.diagnose(
+                            Location::Element(self.element.get_id()),
+                            Diagnostic::CanNotFindIn { value: target },
+                        )
+                    };
                     return None;
                 }
             }
@@ -93,14 +88,12 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
                 Some(Value::Element(value::Element(find_element_id)))
             }
         } else {
-            if let Some(source) = self.source {
-                unsafe {
-                    self.ip.diagnose(
-                        Location::Element(self.element.get_id()),
-                        Diagnostic::FailedFindElement { source },
-                    )
-                };
-            }
+            unsafe {
+                self.ip.diagnose(
+                    Location::Element(self.element.get_id()),
+                    Diagnostic::FailedFindElement {},
+                )
+            };
             return None;
         }
     }
