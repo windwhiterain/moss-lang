@@ -22,6 +22,15 @@ pub enum Diagnostic {
     Custom { text: StringId },
 }
 
+impl Diagnostic {
+    pub fn is_key(&self) -> bool {
+        match self {
+            Diagnostic::RedundantElementKey {} => true,
+            _ => false,
+        }
+    }
+}
+
 impl<'a, IP: InterpreterLike> Display for Contexted<'a, Diagnostic, IP> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.value {

@@ -804,9 +804,19 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 };
                 let element =
                     self.add_element(ElementKey::Name(name), module_id, Some(element_authored));
-                if let Some(id) = scope.elements.insert(name, element.get_id()) {
+                let element_id = element.get_id();
+                if let Some(redundant_key_element_id) =
+                    scope.elements.insert(name, element.get_id())
+                {
                     unsafe {
-                        self.diagnose(Location::Element(id), Diagnostic::RedundantElementKey {})
+                        self.diagnose(
+                            Location::Element(element_id),
+                            Diagnostic::RedundantElementKey {},
+                        );
+                        self.diagnose(
+                            Location::Element(redundant_key_element_id),
+                            Diagnostic::RedundantElementKey {},
+                        );
                     };
                 }
             }

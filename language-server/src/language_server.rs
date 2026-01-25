@@ -158,8 +158,13 @@ impl LanguageServer {
                     let element = self.ip.get(element_id);
                     if let Some(source) = &element.source {
                         for diagnostic in &element_local.diagnoistics {
+                            let source = if diagnostic.is_key() {
+                                source.key_source.unwrap().upcast()
+                            } else {
+                                source.value_source.upcast()
+                            };
                             self.lsp_diagnostics.push(self.ls.make_diagnostic(
-                                source.value_source.upcast(),
+                                source,
                                 format!("{}", diagnostic.with_ctx(self.ip)),
                                 DiagnosticSeverity::ERROR,
                             ));
