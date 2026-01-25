@@ -7,7 +7,6 @@ use crate::{
         element::Element,
         expr::{self, Expr},
         module::ModuleId,
-        scope::Scope,
         value::{self, Value},
     },
     utils::{erase, erase_mut},

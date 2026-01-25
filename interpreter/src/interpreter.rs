@@ -9,7 +9,6 @@ use crate::interpreter::expr::Expr;
 use crate::interpreter::expr::HasRef as _;
 use crate::interpreter::file::File;
 use crate::interpreter::file::FileId;
-use crate::interpreter::function::Function;
 use crate::interpreter::module::Module;
 use crate::interpreter::module::ModuleId;
 use crate::interpreter::module::ModuleLocal;
@@ -36,7 +35,6 @@ use crate::utils::secondary_linked_list::List;
 use crate::utils::unsafe_cell::UnsafeCell;
 use slotmap::SecondaryMap;
 use slotmap::SlotMap;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -399,12 +397,12 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                 .map(|x| self.get_file(x).path.display())
                 .collect::<Vec<_>>()
         );
-        let mut unresolved_num = modules.len();
+        let mut _unresolved_num = modules.len();
         for module_id in modules.iter().copied() {
             let module = erase_mut(unsafe { self.get_module_local_mut(module_id) });
             unsafe { self.run_module(module_id) };
             if module.is_resolved() {
-                unresolved_num -= 1;
+                _unresolved_num -= 1;
             }
         }
         let thread = erase(self.get_thread_remote(self.thread));

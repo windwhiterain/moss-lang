@@ -15,7 +15,7 @@ use crate::{
         scope::Scope,
         value::{self, Value},
     },
-    utils::{contexted::WithContext, erase, erase_mut},
+    utils::{erase, erase_mut},
 };
 
 pub struct CallContext<'a, IP> {
@@ -101,6 +101,7 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
                     Value::Function(value::Function(id)) => {
                         Value::Function(value::Function(self.run_function(id)))
                     }
+                    Value::Element(value::Element(id))=>Value::Element(value::Element(self.run_element(id))),
                     _ => *value,
                 };
                 ElementAuthored::Value(value)
@@ -135,9 +136,6 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
                 .get_mut()
                 .push(self.run_element(*element_id));
         }
-        log::error!("3 {}",mapped_funcion
-                .captures
-                .get_mut().len());
         mapped_funcion.get_id()
     }
 }
@@ -161,13 +159,13 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyDependContext<'a, IP> {
     }
     fn depend_element(&mut self, element_id: Id<Element>) -> Option<()> {
         let value = self.ip.depend_child_element(self.element_id, element_id)?;
-        match value{
-             Value::Scope(value::Scope(scope_id))=>self.depend_scope(scope_id),
-             Value::Function(value::Function(id))=>self.depend_function(id),
-             _=>Some(()),
+        match value {
+            Value::Scope(value::Scope(scope_id)) => self.depend_scope(scope_id),
+            Value::Function(value::Function(id)) => self.depend_function(id),
+            _ => Some(()),
         }
     }
-    fn depend_function(&mut self,function_id:Id<Function>)->Option<()>{
+    fn depend_function(&mut self, function_id: Id<Function>) -> Option<()> {
         let function = self.ip.get(function_id);
         self.depend_element(function.body)
     }
@@ -205,7 +203,6 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
             scope_map: Default::default(),
         };
         ctx.body.root_scope = Some(ctx.map_scope(function.scope));
-        log::error!("1 {}",ctx.captures.len());
         Some(Value::FunctionBody(value::FunctionBody(ctx.body.get_id())))
     }
     fn map_scope(&mut self, scope_id: Id<Scope>) -> Id<Scope> {
@@ -275,6 +272,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
                         let id = self.map_function(id);
                         FunctionElementAuthored::Value(Value::Function(value::Function(id)))
                     }
+                    Value::Element(value::Element(id))=>FunctionElementAuthored::Value(Value::Element(value::Element(self.map_element(id)))),
                     _ => FunctionElementAuthored::Value(value),
                 }
             },
@@ -294,7 +292,6 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
         {
             mapped_function.captures.push(self.map_element(element_id));
         }
-        log::error!("2 {}",mapped_function.captures.len());
         self.body.functions.insert(mapped_function)
     }
 }

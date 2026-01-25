@@ -183,35 +183,36 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn merge_in(
+    pub fn merge_param(
         self,
         ctx: &(impl InterpreterLike + ?Sized),
-        other: Option<Value>,
-    ) -> Option<Id<function::Function>> {
-        let other_function = other.map(|x| x.merge_in(ctx, None)).flatten();
+        ret: &mut Option<Id<function::Function>>
+    ) {
         if let Value::Param(param) = self {
             let function = ctx.get(param.0).function;
-            if let Some(other_function) = other_function {
-                if other_function != function {
-                    if ctx.get(ctx.get(other_function).scope).depth
-                        > ctx.get(ctx.get(function).scope).depth
+            if let Some(ret) = ret {
+                if *ret != function {
+                    if ctx.get(ctx.get(*ret).scope).depth
+                        < ctx.get(ctx.get(function).scope).depth
                     {
-                        return Some(other_function);
+                        *ret = function;
                     }
                 }
+            }else{
+                *ret = Some(function);
             }
-            Some(function)
-        } else {
-            other_function
         }
     }
 }
 
 #[macro_export]
 macro_rules! merge_params { ($ctx:expr, $( $x:expr ),* ) => {
-    $crate::interpreter::value::Value::Trivial($crate::interpreter::value::Trivial)$(.merge_in(
-        $ctx,Some($x))
-    )* };
+        {
+            let mut ret = None;
+            $($x.merge_param($ctx,&mut ret);)*
+            ret
+        }
+    }
 }
 
 impl<'a, Ctx: InterpreterLike + ?Sized> Display for Contexted<'a, Value, Ctx> {

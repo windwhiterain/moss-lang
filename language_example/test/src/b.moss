@@ -1,7 +1,0 @@
-
-b = c;
-c = d;
-d = {
-e=2;
-f="\\hallo world\\"
-};

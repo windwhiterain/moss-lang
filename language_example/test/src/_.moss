@@ -1,6 +1,0 @@
-_ = a.a;
-a = mod "a";
-k = diagnose {on = 1;source = @a;text = "oh no!";};
-q = 1;
-p = mod q;
-o = in -> {a = 1;};

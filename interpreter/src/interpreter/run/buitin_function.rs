@@ -7,7 +7,7 @@ use crate::{
         Id, InterpreterLikeMut, Location, Managed as _, SRC_FILE_EXTENSION, SRC_PATH,
         diagnose::Diagnostic,
         element::Element,
-        function::Param,
+        function::{Param, ParamType},
         module::ModuleId,
         value::{self, BuiltinFunction, Value},
     },
@@ -78,50 +78,53 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let source_key = self.ip.str2id("source");
         let text_key = self.ip.str2id("text");
 
-        let on = self
-            .ip
-            .depend_element(
-                self.element_id,
-                self.ip.find_element(scope, on_key, false)?,
-                self.source,
-            )?
-            .as_int()
-            .ok()?
-            .0;
-        let text = self
-            .ip
-            .depend_element(
-                self.element_id,
-                self.ip.find_element(scope, text_key, false)?,
-                self.source,
-            )?
-            .as_string()
-            .ok()?
-            .0;
-        let source_element = self
-            .ip
-            .depend_element(
-                self.element_id,
-                self.ip.find_element(scope, source_key, false)?,
-                self.source,
-            )?
-            .as_element()
-            .ok()?
-            .0;
+        let on = self.ip.depend_element(
+            self.element_id,
+            self.ip.find_element(scope, on_key, false)?,
+            self.source,
+        )?;
+        let text = self.ip.depend_element(
+            self.element_id,
+            self.ip.find_element(scope, text_key, false)?,
+            self.source,
+        )?;
+        let source_element = self.ip.depend_element(
+            self.element_id,
+            self.ip.find_element(scope, source_key, false)?,
+            self.source,
+        )?;
+        if let Some(function) = merge_params!(self.ip, on, text, source_element) {
+            return Some(Value::Param(value::Param(unsafe {
+                self.ip
+                    .add(
+                        Param {
+                            function,
+                            element: self.element_id,
+                            r#type: Some(ParamType {
+                                depth: 0,
+                                value: Value::Trivial(value::Trivial),
+                            }),
+                        },
+                        self.module_id,
+                    )
+                    .get_id()
+            })));
+        }
+        let on = on.as_int().ok()?.0;
+        let source_element = source_element.as_element().ok()?.0;
+        let text = text.as_string().ok()?.0;
         if on != 0 && self.ip.is_local(source_element) {
             unsafe {
                 self.ip.diagnose(
                     Location::Element(source_element),
                     Diagnostic::Custom {
-                        source: self
+                        source: {let source = self
                             .ip
                             .get(source_element)
                             .source
                             .as_ref()
-                            .unwrap()
-                            .key_source
-                            .unwrap()
-                            .upcast(),
+                            .unwrap();
+                            source.key_source.map(|x|x.upcast()).unwrap_or(source.value_source.upcast())},
                         text,
                     },
                 )
