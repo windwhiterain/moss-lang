@@ -1,7 +1,7 @@
 use enum_extract_macro::EnumExtract;
 
 use crate::{
-    interpreter::{Id, element::Element, function::Function, value::Value},
+    interpreter::{Id, element::Element, function::Function, value::ValueStorage},
     utils::concurrent_string_interner::StringId,
 };
 
@@ -71,17 +71,17 @@ pub struct FunctionBody {
 
 impl HasRef for FunctionBody {}
 
-impl HasRef for Value {
+impl HasRef for ValueStorage {
     fn map_ref(&mut self, mut map: impl FnMut(Id<Element>) -> Id<Element>) {
         match self {
-            Value::Element(element) => element.0 = map(element.0),
+            ValueStorage::Element(element) => element.0 = map(element.0),
             _ => (),
         }
     }
 
     fn iter_ref(&self, mut map: impl FnMut(Id<Element>)) {
         match self {
-            Value::Element(element) => map(element.0),
+            ValueStorage::Element(element) => map(element.0),
             _ => (),
         }
     }
@@ -93,7 +93,7 @@ pub enum Expr {
     Find(Find),
     Call(Call),
     FunctionBody(FunctionBody),
-    Value(Value),
+    Value(ValueStorage),
 }
 
 impl HasRef for Expr {

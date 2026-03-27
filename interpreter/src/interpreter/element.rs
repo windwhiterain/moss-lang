@@ -6,7 +6,7 @@ use type_sitter::UntypedNode;
 use crate::{
     interpreter::{
         Id, Managed, Owner, diagnose::Diagnostic, expr::Expr, module::ModuleId, scope::Scope,
-        value::Value,
+        value::ValueStorage,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
@@ -20,7 +20,7 @@ pub enum ElementKey {
 #[derive(Debug)]
 pub struct ElementLocal {
     pub expr: Option<Expr>,
-    pub value: Option<Value>,
+    pub value: Option<ValueStorage>,
     pub dependency_count: i64,
     pub dependants: SmallVec<[Dependant; 4]>,
     pub diagnoistics: Vec<Diagnostic>,
@@ -38,7 +38,7 @@ pub struct Element {
     pub key: ElementKey,
     pub source: Option<ElementSource>,
     pub module: ModuleId,
-    pub value: OnceLock<Value>,
+    pub value: OnceLock<ValueStorage>,
     pub local: UnsafeCell<ElementLocal>,
 }
 
@@ -97,7 +97,7 @@ pub enum ElementAuthored<'a> {
         scope: &'a mut Scope,
     },
     Expr(Expr),
-    Value(Value),
+    Value(ValueStorage),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -109,5 +109,5 @@ pub struct Dependant {
 #[derive(Debug)]
 pub struct ElementDescriptor {
     pub key: ElementKey,
-    pub value: Value,
+    pub value: ValueStorage,
 }

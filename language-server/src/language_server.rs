@@ -22,7 +22,7 @@ use moss_interpreter::{
         Id, Interpreter, InterpreterLike, Node, SRC_FILE_EXTENSION, UntypedNode,
         file::FileId,
         scope::Scope,
-        value::{self, Value},
+        value::{self, ValueStorage},
     },
     utils::{contexted::WithContext as _, erase, erase_mut},
 };
@@ -175,7 +175,7 @@ impl LanguageServer {
                                         "{}",
                                         element_local
                                             .value
-                                            .unwrap_or(Value::Error(value::Error))
+                                            .unwrap_or(ValueStorage::Error(value::Error))
                                             .with_ctx(self.ip)
                                     ),
                                 DiagnosticSeverity::HINT,

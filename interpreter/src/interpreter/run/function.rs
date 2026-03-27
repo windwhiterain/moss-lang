@@ -13,7 +13,7 @@ use crate::{
         },
         module::ModuleId,
         scope::Scope,
-        value::{self, Value},
+        value::{self, ValueStorage},
     },
     utils::{erase, erase_mut},
 };
@@ -33,7 +33,7 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         ctx: &mut super::Context<'a, IP>,
         function: value::Function,
         param: Id<Element>,
-    ) -> Option<Value> {
+    ) -> Option<ValueStorage> {
         let function = erase(ctx.ip).get(function.0);
         let captures = unsafe { function.captures.as_ref_unchecked() };
         let body = ctx
@@ -52,7 +52,7 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
             scope_map: Default::default(),
             param,
         };
-        Some(Value::Scope(value::Scope(
+        Some(ValueStorage::Scope(value::Scope(
             ctx.run_scope(body.root_scope.unwrap()),
         )))
     }
@@ -95,14 +95,14 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
             }),
             FunctionElementAuthored::Value(value) => {
                 let value = match *value {
-                    Value::Scope(value::Scope(id)) => {
-                        Value::Scope(value::Scope(self.run_scope(id)))
+                    ValueStorage::Scope(value::Scope(id)) => {
+                        ValueStorage::Scope(value::Scope(self.run_scope(id)))
                     }
-                    Value::Function(value::Function(id)) => {
-                        Value::Function(value::Function(self.run_function(id)))
+                    ValueStorage::Function(value::Function(id)) => {
+                        ValueStorage::Function(value::Function(self.run_function(id)))
                     }
-                    Value::Element(value::Element(id)) => {
-                        Value::Element(value::Element(self.run_element(id)))
+                    ValueStorage::Element(value::Element(id)) => {
+                        ValueStorage::Element(value::Element(self.run_element(id)))
                     }
                     _ => *value,
                 };
@@ -161,8 +161,8 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyDependContext<'a, IP> {
     fn depend_element(&mut self, element_id: Id<Element>) -> Option<()> {
         let value = self.ip.depend_child_element(self.element_id, element_id)?;
         match value {
-            Value::Scope(value::Scope(scope_id)) => self.depend_scope(scope_id),
-            Value::Function(value::Function(id)) => self.depend_function(id),
+            ValueStorage::Scope(value::Scope(scope_id)) => self.depend_scope(scope_id),
+            ValueStorage::Function(value::Function(id)) => self.depend_function(id),
             _ => Some(()),
         }
     }
@@ -182,7 +182,7 @@ pub struct BodyContext<'a, IP: InterpreterLikeMut> {
 }
 
 impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
-    pub fn run(ctx: &'a mut super::Context<'b, IP>) -> Option<Value> {
+    pub fn run(ctx: &'a mut super::Context<'b, IP>) -> Option<ValueStorage> {
         let function_body = ctx.expr.extract_as_function_body();
         let function = erase(ctx).ip.get(function_body.function);
         {
@@ -204,7 +204,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
             scope_map: Default::default(),
         };
         ctx.body.root_scope = Some(ctx.map_scope(function.scope));
-        Some(Value::FunctionBody(value::FunctionBody(ctx.body.get_id())))
+        Some(ValueStorage::FunctionBody(value::FunctionBody(ctx.body.get_id())))
     }
     fn map_scope(&mut self, scope_id: Id<Scope>) -> Id<Scope> {
         if let Some(mapped) = self.scope_map.get(&scope_id).copied() {
@@ -251,7 +251,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
                 let element_local = unsafe { self.ip.get_local(element_id) };
                 let value = element_local.value.unwrap();
                 match value {
-                    Value::Param(param) => {
+                    ValueStorage::Param(param) => {
                         let param = self.ip.get(param.0);
                         if param.function == self.function.get_id() {
                             FunctionElementAuthored::Expr({
@@ -265,22 +265,22 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
                             FunctionElementAuthored::Capture(id)
                         }
                     }
-                    Value::Scope(value::Scope(id)) => {
+                    ValueStorage::Scope(value::Scope(id)) => {
                         let id = self.map_scope(id);
-                        FunctionElementAuthored::Value(Value::Scope(value::Scope(id)))
+                        FunctionElementAuthored::Value(ValueStorage::Scope(value::Scope(id)))
                     }
-                    Value::Function(value::Function(id)) => {
+                    ValueStorage::Function(value::Function(id)) => {
                         let id = self.map_function(id);
-                        FunctionElementAuthored::Value(Value::Function(value::Function(id)))
+                        FunctionElementAuthored::Value(ValueStorage::Function(value::Function(id)))
                     }
-                    Value::Element(value::Element(id)) => {
+                    ValueStorage::Element(value::Element(id)) => {
                         let element = unsafe { self.ip.get_local(id) };
-                        let id = if let Value::Param(param) = element.value.unwrap() {
+                        let id = if let ValueStorage::Param(param) = element.value.unwrap() {
                             self.ip.get(param.0).element
                         } else {
                             id
                         };
-                        FunctionElementAuthored::Value(Value::Element(value::Element(
+                        FunctionElementAuthored::Value(ValueStorage::Element(value::Element(
                             self.map_element(id),
                         )))
                     }

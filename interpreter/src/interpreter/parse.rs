@@ -12,7 +12,7 @@ use crate::{
         file::FileId,
         function::{Function, Param},
         scope::{Scope, ScopeAuthored, ScopeSource},
-        value::{self, Value},
+        value::{self, ValueStorage},
     },
     utils::moss,
 };
@@ -81,7 +81,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
         }))
     }
     fn parse_scope(&mut self, scope: moss::Scope<'static>) -> Option<Expr> {
-        Some(Expr::Value(Value::Scope(value::Scope(unsafe {
+        Some(Expr::Value(ValueStorage::Scope(value::Scope(unsafe {
             // SAFETY: element -> scope
             self.ip
                 .add_scope(
@@ -204,7 +204,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                 value = Some(Cow::Borrowed(content_value))
             }
         }
-        Some(Expr::Value(Value::String(value::String(
+        Some(Expr::Value(ValueStorage::String(value::String(
             self.ip
                 .str2id(value.as_ref().map(|x| x.as_ref()).unwrap_or("")),
         ))))
@@ -258,7 +258,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             .add_element(
                 ElementKey::Name(param_name),
                 scope.module,
-                Some(ElementAuthored::Value(Value::Param(value::Param(
+                Some(ElementAuthored::Value(ValueStorage::Param(value::ParamStorage(
                     param.get_id(),
                 )))),
             )
@@ -281,13 +281,13 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             .get_id();
         function.body = body_element_id;
         function.param = param_element_id;
-        Some(Expr::Value(Value::Function(value::Function(
+        Some(Expr::Value(ValueStorage::Function(value::Function(
             function.get_id(),
         ))))
     }
     fn parse(&mut self) -> Option<Expr> {
         match self.source_child {
-            moss::ValueChild::Int(int) => Some(Expr::Value(Value::Int(value::Int(
+            moss::ValueChild::Int(int) => Some(Expr::Value(ValueStorage::Int(value::Int(
                 self.ip.get_source_str(&int, self.file_id).parse().unwrap(),
             )))),
             moss::ValueChild::String(string) => self.parse_string(string),
@@ -303,7 +303,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             moss::ValueChild::Bracket(bracket) => {
                 parse_value(self.ip, bracket.value(), self.element_id, self.scope)
             }
-            _ => Some(Expr::Value(Value::Error(value::Error))),
+            _ => Some(Expr::Value(ValueStorage::Error(value::Error))),
         }
     }
 }

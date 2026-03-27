@@ -7,7 +7,7 @@ use crate::{
         element::Element,
         expr::{self, Expr},
         module::ModuleId,
-        value::{self, Value},
+        value::{self, ValueStorage},
     },
     utils::{erase, erase_mut},
 };
@@ -24,7 +24,7 @@ pub struct Context<'a, IP> {
 }
 
 impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
-    pub fn run_value(ip: &'a mut IP, element_id: Id<Element>) -> Option<Value> {
+    pub fn run_value(ip: &'a mut IP, element_id: Id<Element>) -> Option<ValueStorage> {
         let element = erase(ip).get(element_id);
         let module_id = element.module;
         let source = element.source.map(|x| x.value_source.upcast());
@@ -47,12 +47,12 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
             Expr::Value(value) => Some(*value),
         }
     }
-    fn run_ref(&mut self) -> Option<Value> {
+    fn run_ref(&mut self) -> Option<ValueStorage> {
         let r#ref = self.expr.extract_as_ref();
         self.ip
             .depend_element(self.element.get_id(), r#ref.element_id, self.source)
     }
-    fn run_find(&mut self) -> Option<Value> {
+    fn run_find(&mut self) -> Option<ValueStorage> {
         let find = self.expr.extract_as_find();
         let scope_id = self.element.source.as_ref().unwrap().scope;
         let find_element_id = if let Some(target) = find.target {
@@ -60,7 +60,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
                 .ip
                 .depend_child_element(self.element.get_id(), target)?;
             match target {
-                Value::Scope(value::Scope(scope_id)) => {
+                ValueStorage::Scope(value::Scope(scope_id)) => {
                     self.ip.find_element(scope_id, find.name, false)
                 }
                 _ => {
@@ -85,7 +85,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
                 self.ip
                     .depend_element(self.element.get_id(), find_element_id, self.source)
             } else {
-                Some(Value::Element(value::Element(find_element_id)))
+                Some(ValueStorage::Element(value::Element(find_element_id)))
             }
         } else {
             unsafe {
@@ -97,19 +97,19 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
             return None;
         }
     }
-    fn run_call(&mut self) -> Option<Value> {
+    fn run_call(&mut self) -> Option<ValueStorage> {
         let call = self.expr.extract_as_call();
         let function = self
             .ip
             .depend_child_element(self.element.get_id(), call.function)?;
         match function {
-            Value::BuiltinFunction(builtin) => {
+            ValueStorage::BuiltinFunction(builtin) => {
                 let param = self
                     .ip
                     .depend_child_element(self.element.get_id(), call.param)?;
                 buitin_function::Context::run(self, builtin, param)
             }
-            Value::Function(function) => function::CallContext::run(self, function, call.param),
+            ValueStorage::Function(function) => function::CallContext::run(self, function, call.param),
             _ => return None,
         }
     }

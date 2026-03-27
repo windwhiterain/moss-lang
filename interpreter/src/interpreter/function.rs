@@ -6,7 +6,7 @@ use crate::{
         expr::Expr,
         module::ModuleId,
         scope::Scope,
-        value::{self, Value},
+        value::{self, ValueStorage},
     },
     utils::unsafe_cell::UnsafeCell,
 };
@@ -14,7 +14,7 @@ use crate::{
 #[derive(Debug)]
 pub enum FunctionElementAuthored {
     Expr(Expr),
-    Value(Value),
+    Value(ValueStorage),
     Capture(usize),
 }
 
@@ -26,7 +26,7 @@ pub struct FunctionElement {
 
 impl FunctionElement {
     pub const DUMMY: Self = Self {
-        authored: FunctionElementAuthored::Value(Value::Trivial(value::Trivial)),
+        authored: FunctionElementAuthored::Value(ValueStorage::Trivial(value::Trivial)),
         key: ElementKey::Temp,
     };
 }
@@ -144,17 +144,12 @@ impl Managed for Function {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ParamType {
-    pub value: Value,
-    pub depth: usize,
-}
 
 #[derive(Debug)]
 pub struct Param {
     pub function: Id<Function>,
     pub element: Id<Element>,
-    pub r#type: Option<ParamType>,
+    pub r#type: Option<ValueStorage>,
 }
 
 impl Managed for Param {

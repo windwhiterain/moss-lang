@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    interpreter::{InterpreterLike, value::Value},
+    interpreter::{InterpreterLike, value::ValueStorage},
     utils::{
         concurrent_string_interner::StringId,
         contexted::{Contexted, WithContext},
@@ -14,8 +14,8 @@ pub enum Diagnostic {
     RedundantElementKey {},
     FailedFindElement {},
     FialedFindElementOrPrivateElement {},
-    CanNotFindIn { value: Value },
-    CanNotCallOn { value: Value },
+    CanNotFindIn { value: ValueStorage },
+    CanNotCallOn { value: ValueStorage },
     StringEscapeError {},
     Custom { text: StringId },
 }

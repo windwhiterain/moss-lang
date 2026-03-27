@@ -7,9 +7,9 @@ use crate::{
         Id, InterpreterLikeMut, Location, Managed as _, SRC_FILE_EXTENSION, SRC_PATH,
         diagnose::Diagnostic,
         element::Element,
-        function::{Param, ParamType},
+        function::{Param},
         module::ModuleId,
-        value::{self, BuiltinFunction, Value},
+        value::{self, BuiltinFunction, ValueStorage},
     },
     merge_params,
 };
@@ -19,15 +19,15 @@ pub struct Context<'a, IP> {
     element_id: Id<Element>,
     module_id: ModuleId,
     source: Option<UntypedNode<'static>>,
-    param: Value,
+    param: ValueStorage,
 }
 
 impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
     pub fn run(
         ctx: &'a mut super::Context<'b, IP>,
         builtin_function: BuiltinFunction,
-        param: Value,
-    ) -> Option<Value> {
+        param: ValueStorage,
+    ) -> Option<ValueStorage> {
         let mut ctx = Self {
             ip: ctx.ip,
             element_id: ctx.element.get_id(),
@@ -40,9 +40,9 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             BuiltinFunction::Diagnose => ctx.run_diagnose(),
         }
     }
-    fn run_mod(&mut self) -> Option<Value> {
+    fn run_mod(&mut self) -> Option<ValueStorage> {
         if let Some(function) = merge_params!(self.ip, self.param) {
-            return Some(Value::Param(value::Param(
+            return Some(ValueStorage::Param(value::ParamStorage(
                 unsafe {
                     self.ip.add(
                         Param {
@@ -70,9 +70,9 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             .ok()?
             .0;
 
-        Some(Value::Scope(value::Scope(root_scope)))
+        Some(ValueStorage::Scope(value::Scope(root_scope)))
     }
-    fn run_diagnose(&mut self) -> Option<Value> {
+    fn run_diagnose(&mut self) -> Option<ValueStorage> {
         let scope = self.param.as_scope().ok()?.0;
         let on_key = self.ip.str2id("on");
         let source_key = self.ip.str2id("source");
@@ -94,16 +94,13 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.source,
         )?;
         if let Some(function) = merge_params!(self.ip, on, text, source_element) {
-            return Some(Value::Param(value::Param(unsafe {
+            return Some(ValueStorage::Param(value::ParamStorage(unsafe {
                 self.ip
                     .add(
                         Param {
                             function,
                             element: self.element_id,
-                            r#type: Some(ParamType {
-                                depth: 0,
-                                value: Value::Trivial(value::Trivial),
-                            }),
+                            r#type: Some(ValueStorage::Diagnostic(value::Diagnostic)),
                         },
                         self.module_id,
                     )
@@ -121,6 +118,6 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
                 )
             };
         }
-        Some(Value::Trivial(value::Trivial))
+        Some(ValueStorage::Trivial(value::Trivial))
     }
 }
