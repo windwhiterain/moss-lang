@@ -1,3 +1,4 @@
+use crate::interpreter::set::Set;
 use crate::utils::typed_key::Vec as KeyVec;
 use crate::{
     interpreter::{
@@ -18,6 +19,10 @@ pub enum FunctionElementAuthored {
     Capture(usize),
 }
 
+#[derive(Debug,Default)]
+pub struct FunctionSet{
+    pub elements: Vec<Id<Element>>,
+}
 #[derive(Debug)]
 pub struct FunctionElement {
     pub authored: FunctionElementAuthored,
@@ -59,6 +64,7 @@ impl FunctionFunction {
 
 #[derive(Debug)]
 pub struct FunctionBody {
+    pub sets: KeyVec<Id<Set>,FunctionSet>,
     pub scopes: KeyVec<Id<Scope>, FunctionScope>,
     pub elements: KeyVec<Id<Element>, FunctionElement>,
     pub functions: KeyVec<Id<Function>, FunctionFunction>,
@@ -69,6 +75,7 @@ impl FunctionBody {
     pub const PARAM_ELEMENT_ID: Id<Element> = Id::from_idx(usize::MAX);
     pub fn new() -> Self {
         Self {
+            sets: Default::default(),
             scopes: Default::default(),
             elements: Default::default(),
             functions: Default::default(),

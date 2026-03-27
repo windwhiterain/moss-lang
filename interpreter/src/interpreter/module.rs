@@ -3,7 +3,7 @@ use crate::{
     interpreter::{
         Id,
         file::FileId,
-        function::{Function, FunctionBody, Param},
+        function::{Function, FunctionBody, Param}, set::Set,
     },
     utils::pool::Pool,
 };
@@ -17,7 +17,7 @@ use crate::interpreter::{
 
 gen_pools! {
     #[derive(Debug)]
-    pub Pools{scopes:Scope,elements:Element,functions:Function,params:Param,function_bodies:FunctionBody}
+    pub Pools{scopes:Scope,elements:Element,functions:Function,params:Param,function_bodies:FunctionBody,sets:Set}
 }
 
 #[derive(Debug)]

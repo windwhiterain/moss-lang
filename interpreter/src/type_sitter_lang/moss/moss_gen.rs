@@ -634,7 +634,7 @@ impl<'tree> ::type_sitter::Node<'tree> for Scope<'tree> {
         self.0
     }
 }
-#[doc = "Typed node `set`\n\nThis node has these fields:\n\n- `key`: `name*` ([`Name`])\n"]
+#[doc = "Typed node `set`\n\nThis node has these fields:\n\n- `value`: `value*` ([`Value`])\n"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 #[allow(non_camel_case_types)]
@@ -642,15 +642,16 @@ pub struct Set<'tree>(::type_sitter::raw::Node<'tree>);
 #[automatically_derived]
 #[allow(unused)]
 impl<'tree> Set<'tree> {
-    #[doc = "Get the children of field `key`.\n\nThese children have type `name*` ([`Name`])"]
+    #[doc = "Get the children of field `value`.\n\nThese children have type `value*` ([`Value`])"]
     #[inline]
-    pub fn keys<'a>(
+    pub fn values<'a>(
         &self,
         c: &'a mut ::type_sitter::TreeCursor<'tree>,
-    ) -> impl ::std::iter::Iterator<Item = ::type_sitter::NodeResult<'tree, Name<'tree>>> + 'a {
+    ) -> impl ::std::iter::Iterator<Item = ::type_sitter::NodeResult<'tree, Value<'tree>>> + 'a
+    {
         ::type_sitter::Node::raw(self)
-            .children_by_field_name("key", &mut c.0)
-            .map(<Name<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
+            .children_by_field_name("value", &mut c.0)
+            .map(<Value<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
     }
 }
 #[automatically_derived]
@@ -1637,7 +1638,7 @@ pub mod anon_unions {
     {
         type WithLifetime<'a> =
             Bracket_Call_Find_FindIn_Function_Int_MetaFind_MetaFindIn_Scope_Set_String_Trivial<'a>;
-        const KIND: &'static str = "{bracket | call | find | find_in | function | int | meta_find | meta_find_in | scope | set | string | trivial}";
+        const KIND : & 'static str = "{bracket | call | find | find_in | function | int | meta_find | meta_find_in | scope | set | string | trivial}" ;
         #[inline]
         fn try_from_raw(
             node: ::type_sitter::raw::Node<'tree>,

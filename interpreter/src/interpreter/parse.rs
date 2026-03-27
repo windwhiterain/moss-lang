@@ -12,6 +12,7 @@ use crate::{
         file::FileId,
         function::{Function, Param},
         scope::{Scope, ScopeAuthored, ScopeSource},
+        set::Set,
         value::{self, ValueStorage},
     },
     utils::moss,
@@ -258,9 +259,9 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             .add_element(
                 ElementKey::Name(param_name),
                 scope.module,
-                Some(ElementAuthored::Value(ValueStorage::Param(value::ParamStorage(
-                    param.get_id(),
-                )))),
+                Some(ElementAuthored::Value(ValueStorage::Param(
+                    value::ParamStorage(param.get_id()),
+                ))),
             )
             .get_id();
         scope.elements.insert(param_name, param_element_id);
@@ -285,6 +286,40 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             function.get_id(),
         ))))
     }
+    fn parse_set(&mut self, set_source: moss::Set<'static>) -> Option<Expr> {
+        let mut cursor = erase_struct!(self.ip.get_file(self.file_id).tree.walk());
+        let set = erase_mut(unsafe {
+            self.ip.add::<Set>(
+                Set {
+                    elements: Default::default(),
+                    module: self.scope.module,
+                },
+                self.scope.module,
+            )
+        });
+
+        for value in set_source.values(&mut cursor) {
+            if let Some(value) = unsafe {
+                self.ip
+                    .grammar_error(Location::Element(self.element_id), value)
+            } {
+                let element = self.ip.add_element(
+                    ElementKey::Temp,
+                    self.scope.module,
+                    Some(ElementAuthored::Source {
+                        source: ElementSource {
+                            value_source: value,
+                            key_source: None,
+                            scope: self.scope.get_id(),
+                        },
+                        scope: self.scope,
+                    }),
+                );
+                set.elements.push(element.get_id());
+            }
+        }
+        Some(Expr::Value(ValueStorage::Set(value::Set(set.get_id()))))
+    }
     fn parse(&mut self) -> Option<Expr> {
         match self.source_child {
             moss::ValueChild::Int(int) => Some(Expr::Value(ValueStorage::Int(value::Int(
@@ -303,6 +338,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             moss::ValueChild::Bracket(bracket) => {
                 parse_value(self.ip, bracket.value(), self.element_id, self.scope)
             }
+            moss::ValueChild::Set(set) => self.parse_set(set),
             _ => Some(Expr::Value(ValueStorage::Error(value::Error))),
         }
     }

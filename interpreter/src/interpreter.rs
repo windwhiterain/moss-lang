@@ -66,6 +66,7 @@ pub mod module;
 pub mod scope;
 pub mod thread;
 pub mod value;
+pub mod set;
 
 mod parse;
 mod run;
@@ -231,9 +232,20 @@ impl Interpreter {
                 ))),
             )
             .get_id();
+        let with_name = self.str2id("with");
+        let with_element_id = self
+            .add_element(
+                ElementKey::Name(with_name),
+                module_id,
+                Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
+                    BuiltinFunction::With,
+                ))),
+            )
+            .get_id();
         scope.elements = HashMap::from_iter([
             (mod_name, mod_element_id),
             (diagnose_name, diagnose_element_id),
+            (with_name,with_element_id)
         ]);
         self.set_element_value(
             self.get_module(module_id).root_scope.unwrap(),
@@ -567,7 +579,7 @@ pub trait InterpreterLike: Sized {
             }
         } {
             Some(raw)
-        } else {
+        } else if include_super{
             let builtin_module = self.get_builtin_module();
             let scope = self.get::<Scope>(
                 self.get_element_value(self.get_module(builtin_module).root_scope.unwrap())
@@ -581,6 +593,8 @@ pub trait InterpreterLike: Sized {
             } else {
                 None
             }
+        }else{
+            None
         }
     }
     fn collect<Ctx>(

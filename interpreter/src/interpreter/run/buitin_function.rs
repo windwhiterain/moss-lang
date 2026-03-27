@@ -7,11 +7,11 @@ use crate::{
         Id, InterpreterLikeMut, Location, Managed as _, SRC_FILE_EXTENSION, SRC_PATH,
         diagnose::Diagnostic,
         element::Element,
-        function::{Param},
+        function::Param,
         module::ModuleId,
         value::{self, BuiltinFunction, ValueStorage},
     },
-    merge_params,
+    merge_params, utils::erase,
 };
 
 pub struct Context<'a, IP> {
@@ -38,6 +38,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
         match builtin_function {
             BuiltinFunction::Mod => ctx.run_mod(),
             BuiltinFunction::Diagnose => ctx.run_diagnose(),
+            BuiltinFunction::With=>ctx.run_with(),
         }
     }
     fn run_mod(&mut self) -> Option<ValueStorage> {
@@ -119,5 +120,42 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             };
         }
         Some(ValueStorage::Trivial(value::Trivial))
+    }
+    fn run_with(&mut self) -> Option<ValueStorage>{
+        let scope = self.param.as_scope().ok()?.0;
+        let value_key = self.ip.str2id("value");
+        let effect_key = self.ip.str2id("effects");
+
+        let value = self.ip.depend_element(
+            self.element_id,
+            self.ip.find_element(scope, value_key, false)?,
+            self.source,
+        )?;
+        let effects = self.ip.depend_element(
+            self.element_id,
+            self.ip.find_element(scope, effect_key, false)?,
+            self.source,
+        )?;
+        let effects = effects.as_set().ok()?;
+        let effects = erase(self.ip.get(effects.0));
+        for effect in &effects.elements{
+            self.ip.depend_element(self.element_id, *effect, self.source)?;
+        }
+        if let Ok(param) = value.as_param(){
+            let param = erase(self.ip.get(param.0));
+            return Some(ValueStorage::Param(value::ParamStorage(unsafe {
+                self.ip
+                    .add(
+                        Param {
+                            function: param.function,
+                            element: self.element_id,
+                            r#type: param.r#type,
+                        },
+                        self.module_id,
+                    )
+                    .get_id()
+            })));
+        }
+        Some(value)
     }
 }

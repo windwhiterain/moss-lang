@@ -9,10 +9,11 @@ use crate::{
         expr::{self, Expr, HasRef as _},
         function::{
             Function, FunctionBody, FunctionElement, FunctionElementAuthored, FunctionFunction,
-            FunctionScope,
+            FunctionScope, FunctionSet,
         },
         module::ModuleId,
         scope::Scope,
+        set::Set,
         value::{self, ValueStorage},
     },
     utils::{erase, erase_mut},
@@ -56,6 +57,21 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
             ctx.run_scope(body.root_scope.unwrap()),
         )))
     }
+    fn run_set(&mut self,set_id:Id<Set>)->Id<Set>{
+        let set = erase(self).body.sets.get(set_id);
+        let mapped_set = unsafe {
+            erase_mut(self).ip.add(
+                Set{ elements: Default::default(), module: Default::default() },
+                self.module_id,
+            )
+        };
+        for element_id in set.elements.iter().copied() {
+            mapped_set
+                .elements
+                .push(self.run_element(element_id));
+        }
+        mapped_set.get_id()
+    }
     fn run_scope(&mut self, scope_id: Id<Scope>) -> Id<Scope> {
         if let Some(id) = self.scope_map.get(scope_id.to_idx()).copied().flatten() {
             return id;
@@ -95,6 +111,9 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
             }),
             FunctionElementAuthored::Value(value) => {
                 let value = match *value {
+                    ValueStorage::Set(value::Set(id))=>{
+                        ValueStorage::Set(value::Set(self.run_set(id)))
+                    }
                     ValueStorage::Scope(value::Scope(id)) => {
                         ValueStorage::Scope(value::Scope(self.run_scope(id)))
                     }
@@ -204,7 +223,17 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
             scope_map: Default::default(),
         };
         ctx.body.root_scope = Some(ctx.map_scope(function.scope));
-        Some(ValueStorage::FunctionBody(value::FunctionBody(ctx.body.get_id())))
+        Some(ValueStorage::FunctionBody(value::FunctionBody(
+            ctx.body.get_id(),
+        )))
+    }
+    fn map_set(&mut self, set_id: Id<Set>) -> Id<Set> {
+        let set = erase(self).ip.get(set_id);
+        let mut mapped_function = FunctionSet::default();
+        for element_id in set.elements.iter().copied() {
+            mapped_function.elements.push(self.map_element(element_id));
+        }
+        self.body.sets.insert(mapped_function)
     }
     fn map_scope(&mut self, scope_id: Id<Scope>) -> Id<Scope> {
         if let Some(mapped) = self.scope_map.get(&scope_id).copied() {
@@ -283,6 +312,10 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
                         FunctionElementAuthored::Value(ValueStorage::Element(value::Element(
                             self.map_element(id),
                         )))
+                    }
+                    ValueStorage::Set(value::Set(set)) => {
+                        let id = self.map_set(set);
+                        FunctionElementAuthored::Value(ValueStorage::Set(value::Set(id)))
                     }
                     _ => FunctionElementAuthored::Value(value),
                 }

@@ -5,7 +5,7 @@ use crate::{
         Id,
         element::{self, ElementKey},
         function::{self},
-        scope::{self},
+        scope::{self}, set,
     },
     utils::contexted::{Contexted, WithContext},
 };
@@ -25,6 +25,7 @@ pub trait ValueLike {
 pub enum BuiltinFunction {
     Mod,
     Diagnose,
+    With,
 }
 impl fmt::Display for BuiltinFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -32,6 +33,7 @@ impl fmt::Display for BuiltinFunction {
         match self {
             BuiltinFunction::Mod => write!(f, "mod"),
             BuiltinFunction::Diagnose => write!(f, "diagnose"),
+            BuiltinFunction::With => write!(f, "with"),
         }
     }
 }
@@ -92,13 +94,44 @@ impl ValueLike for StringType{
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Set(pub Id<set::Set>);
+impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Set, Ctx> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let set = self.ctx.get(self.value.0);
+        write!(f, "{{}}^{}",set.elements.len())
+    }
+}
+impl ValueLike for Set{
+    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
+        ValueStorage::SetType(SetType)
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetType;
+impl Display for SetType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Set")
+    }
+}
+impl ValueLike for SetType{
+    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
+        ValueStorage::TypeType(TypeType)
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Scope(pub Id<scope::Scope>);
 impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Scope, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let scope = self.ctx.get(self.value.0);
         write!(f, "{{")?;
-        for key in scope.elements.keys() {
-            write!(f, "{}, ", self.ctx.id2str(*key).deref(),)?;
+        let mut elements = scope.elements.keys();
+        if let Some(first) = elements.next(){
+            write!(f, "{};", self.ctx.id2str(*first).deref(),)?;
+            for key in elements {
+            write!(f, " {};", self.ctx.id2str(*key).deref(),)?;
+        }
+        }else{
+            write!(f,";")?
         }
         write!(f, "}}")
     }
@@ -265,7 +298,7 @@ impl ValueLike for Diagnostic{
     }
     
     fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::Error(Error)
+        ValueStorage::TypeType(TypeType)
     }
 }
 
@@ -275,6 +308,8 @@ pub enum ValueStorage {
     IntType(IntType),
     String(String),
     StringType(StringType),
+    Set(Set),
+    SetType(SetType),
     Scope(Scope),
     ScopeType(ScopeType),
     Element(Element),
@@ -328,6 +363,8 @@ impl<'a, Ctx: InterpreterLike + ?Sized> Display for Contexted<'a, ValueStorage, 
             ValueStorage::IntType(value) => write!(f, "{}", value),
             ValueStorage::String(value) => write!(f, "{}", value.with_ctx(self.ctx)),
             ValueStorage::StringType(value) => write!(f, "{}", value),
+            ValueStorage::Set(value) => write!(f, "{}", value.with_ctx(self.ctx)),
+            ValueStorage::SetType(value) => write!(f, "{}", value),
             ValueStorage::Scope(value) => write!(f, "{}", value.with_ctx(self.ctx)),
             ValueStorage::ScopeType(value) => write!(f, "{}", value),
             ValueStorage::Element(value) => write!(f, "{}", value.with_ctx(self.ctx)),
