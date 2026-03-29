@@ -25,7 +25,8 @@ pub trait ValueLike {
 pub enum BuiltinFunction {
     Mod,
     Diagnose,
-    With,
+    Equal,
+    Switch,
 }
 impl fmt::Display for BuiltinFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -33,7 +34,8 @@ impl fmt::Display for BuiltinFunction {
         match self {
             BuiltinFunction::Mod => write!(f, "mod"),
             BuiltinFunction::Diagnose => write!(f, "diagnose"),
-            BuiltinFunction::With => write!(f, "with"),
+            BuiltinFunction::Equal => write!(f, "equal"),
+            BuiltinFunction::Switch => write!(f,"switch"),
         }
     }
 }
@@ -45,7 +47,7 @@ impl ValueLike for BuiltinFunction{
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Int(pub i64);
+pub struct Int(pub usize);
 
 impl Display for Int {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

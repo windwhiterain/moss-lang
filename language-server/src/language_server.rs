@@ -138,13 +138,14 @@ impl LanguageServer {
                 let scope_local = unsafe { self.ip.get_local(scope_id) };
                 let scope = self.ip.get(scope_id);
                 if let Some(authored) = scope.authored {
-                    let source = authored.source.source();
-                    for diagnostic in &scope_local.diagnoistics {
-                        self.lsp_diagnostics.push(self.ls.make_diagnostic(
-                            source,
-                            format!("{}", diagnostic.with_ctx(self.ip)),
-                            DiagnosticSeverity::ERROR,
-                        ));
+                    if let Some(source) = authored.source {
+                        for diagnostic in &scope_local.diagnoistics {
+                            self.lsp_diagnostics.push(self.ls.make_diagnostic(
+                                source.upcast(),
+                                format!("{}", diagnostic.with_ctx(self.ip)),
+                                DiagnosticSeverity::ERROR,
+                            ));
+                        }
                     }
                 }
                 for element_id in scope

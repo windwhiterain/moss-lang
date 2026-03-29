@@ -36,17 +36,16 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         param: Id<Element>,
     ) -> Option<ValueStorage> {
         let function = erase(ctx.ip).get(function.0);
-        let captures = unsafe { function.captures.as_ref_unchecked() };
+        let local = unsafe { erase(ctx.ip).get_local(function.get_id()) };
         let body = ctx
             .ip
             .depend_child_element(ctx.element.get_id(), function.body)?
             .extract_as_function_body()
             .0;
         let body = erase(ctx).ip.get(body);
-        log::error!("function_body {:#?}", body);
         let mut ctx = CallContext {
             ip: ctx.ip,
-            captures,
+            captures:&local.captures,
             body,
             module_id: ctx.module_id,
             element_map: Default::default(),
@@ -83,9 +82,11 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
             let mapped_element_id = self.run_element(element_id);
             if element_id != FunctionBody::PARAM_ELEMENT_ID {
                 let element = self.body.elements.get(element_id);
-                mapped_scope
+                if let Ok(name) = element.key.as_name().copied(){
+                    mapped_scope
                     .elements
-                    .insert(*element.key.extract_as_name(), mapped_element_id);
+                    .insert(name, mapped_element_id);
+                }
             }
         }
         if self.scope_map.len() <= scope_id.to_idx() {
@@ -152,8 +153,8 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         };
         for element_id in &function.captures {
             mapped_funcion
-                .captures
-                .get_mut()
+                .local
+                .get_mut().captures
                 .push(self.run_element(*element_id));
         }
         mapped_funcion.get_id()
@@ -204,6 +205,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
     pub fn run(ctx: &'a mut super::Context<'b, IP>) -> Option<ValueStorage> {
         let function_body = ctx.expr.extract_as_function_body();
         let function = erase(ctx).ip.get(function_body.function);
+        let local = unsafe { erase_mut(ctx).ip.get_local_mut(function.get_id()) };
         {
             let mut ctx = BodyDependContext {
                 ip: ctx.ip,
@@ -212,12 +214,12 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
             };
             ctx.depend_scope(function.scope)?;
         }
-        let captures = unsafe { erase(function).captures.as_mut_unchecked() };
+        
         let body = unsafe { erase_mut(ctx).ip.add(FunctionBody::new(), ctx.module_id) };
         let mut ctx = BodyContext {
             ip: ctx.ip,
             function,
-            captures,
+            captures:&mut local.captures,
             body,
             element_map: Default::default(),
             scope_map: Default::default(),
@@ -329,8 +331,9 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
     }
     fn map_function(&mut self, function_id: Id<Function>) -> Id<Function> {
         let function = erase(self).ip.get(function_id);
+        let local = unsafe { erase(self).ip.get_local(function_id) };
         let mut mapped_function = FunctionFunction::new(function.body);
-        for element_id in unsafe { function.captures.as_ref_unchecked() }
+        for element_id in local.captures
             .iter()
             .copied()
         {

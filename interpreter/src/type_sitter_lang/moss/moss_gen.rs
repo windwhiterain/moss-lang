@@ -582,7 +582,7 @@ impl<'tree> ::type_sitter::Node<'tree> for NameImd<'tree> {
         self.0
     }
 }
-#[doc = "Typed node `scope`\n\nThis node has these fields:\n\n- `assign`: `assign*` ([`Assign`])\n"]
+#[doc = "Typed node `scope`\n\nThis node has an optional named child of type `scope_content?` ([`ScopeContent`])\n"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 #[allow(non_camel_case_types)]
@@ -590,17 +590,21 @@ pub struct Scope<'tree>(::type_sitter::raw::Node<'tree>);
 #[automatically_derived]
 #[allow(unused)]
 impl<'tree> Scope<'tree> {
-    #[doc = "Get the children of field `assign`.\n\nThese children have type `assign*` ([`Assign`])"]
+    #[doc = "Get the node's only not-extra named child, if it has one.\n\nThis child has type `scope_content?` ([`ScopeContent`])"]
     #[inline]
-    pub fn assigns<'a>(
+    pub fn scope_content(
         &self,
-        c: &'a mut ::type_sitter::TreeCursor<'tree>,
-    ) -> impl ::std::iter::Iterator<Item = ::type_sitter::NodeResult<'tree, Assign<'tree>>> + 'a
-    {
-        ::type_sitter::Node::raw(self)
-            .children_by_field_name("assign", &mut c.0)
-            .map(<Assign<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
+    ) -> ::std::option::Option<::type_sitter::NodeResult<'tree, ScopeContent<'tree>>> {
+        (0..::type_sitter::Node::raw(self).named_child_count())
+            .map(|i| ::type_sitter::Node::raw(self).named_child(i).unwrap())
+            .filter(|n| !n.is_extra())
+            .next()
+            .map(<ScopeContent<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
     }
+}
+#[automatically_derived]
+impl<'tree> ::type_sitter::HasOptionalChild<'tree> for Scope<'tree> {
+    type Child = ScopeContent<'tree>;
 }
 #[automatically_derived]
 impl<'tree> ::type_sitter::Node<'tree> for Scope<'tree> {
@@ -619,6 +623,69 @@ impl<'tree> ::type_sitter::Node<'tree> for Scope<'tree> {
     #[inline]
     unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
         debug_assert_eq!(node.kind(), "scope");
+        Self(node)
+    }
+    #[inline]
+    fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
+        &self.0
+    }
+    #[inline]
+    fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
+        &mut self.0
+    }
+    #[inline]
+    fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
+        self.0
+    }
+}
+#[doc = "Typed node `scope_content`\n\nThis node has these fields:\n\n- `assign`: `assign*` ([`Assign`])\n- `effect`: `value*` ([`Value`])\n"]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+#[allow(non_camel_case_types)]
+pub struct ScopeContent<'tree>(::type_sitter::raw::Node<'tree>);
+#[automatically_derived]
+#[allow(unused)]
+impl<'tree> ScopeContent<'tree> {
+    #[doc = "Get the children of field `assign`.\n\nThese children have type `assign*` ([`Assign`])"]
+    #[inline]
+    pub fn assigns<'a>(
+        &self,
+        c: &'a mut ::type_sitter::TreeCursor<'tree>,
+    ) -> impl ::std::iter::Iterator<Item = ::type_sitter::NodeResult<'tree, Assign<'tree>>> + 'a
+    {
+        ::type_sitter::Node::raw(self)
+            .children_by_field_name("assign", &mut c.0)
+            .map(<Assign<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
+    }
+    #[doc = "Get the children of field `effect`.\n\nThese children have type `value*` ([`Value`])"]
+    #[inline]
+    pub fn effects<'a>(
+        &self,
+        c: &'a mut ::type_sitter::TreeCursor<'tree>,
+    ) -> impl ::std::iter::Iterator<Item = ::type_sitter::NodeResult<'tree, Value<'tree>>> + 'a
+    {
+        ::type_sitter::Node::raw(self)
+            .children_by_field_name("effect", &mut c.0)
+            .map(<Value<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
+    }
+}
+#[automatically_derived]
+impl<'tree> ::type_sitter::Node<'tree> for ScopeContent<'tree> {
+    type WithLifetime<'a> = ScopeContent<'a>;
+    const KIND: &'static str = "scope_content";
+    #[inline]
+    fn try_from_raw(
+        node: ::type_sitter::raw::Node<'tree>,
+    ) -> ::type_sitter::NodeResult<'tree, Self> {
+        if node.kind() == "scope_content" {
+            Ok(Self(node))
+        } else {
+            Err(::type_sitter::IncorrectKind::new::<Self>(node))
+        }
+    }
+    #[inline]
+    unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
+        debug_assert_eq!(node.kind(), "scope_content");
         Self(node)
     }
     #[inline]
@@ -686,7 +753,7 @@ impl<'tree> ::type_sitter::Node<'tree> for Set<'tree> {
         self.0
     }
 }
-#[doc = "Typed node `source_file`\n\nThis node has these fields:\n\n- `assign`: `assign*` ([`Assign`])\n"]
+#[doc = "Typed node `source_file`\n\nThis node has an optional named child of type `scope_content?` ([`ScopeContent`])\n"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 #[allow(non_camel_case_types)]
@@ -694,17 +761,21 @@ pub struct SourceFile<'tree>(::type_sitter::raw::Node<'tree>);
 #[automatically_derived]
 #[allow(unused)]
 impl<'tree> SourceFile<'tree> {
-    #[doc = "Get the children of field `assign`.\n\nThese children have type `assign*` ([`Assign`])"]
+    #[doc = "Get the node's only not-extra named child, if it has one.\n\nThis child has type `scope_content?` ([`ScopeContent`])"]
     #[inline]
-    pub fn assigns<'a>(
+    pub fn scope_content(
         &self,
-        c: &'a mut ::type_sitter::TreeCursor<'tree>,
-    ) -> impl ::std::iter::Iterator<Item = ::type_sitter::NodeResult<'tree, Assign<'tree>>> + 'a
-    {
-        ::type_sitter::Node::raw(self)
-            .children_by_field_name("assign", &mut c.0)
-            .map(<Assign<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
+    ) -> ::std::option::Option<::type_sitter::NodeResult<'tree, ScopeContent<'tree>>> {
+        (0..::type_sitter::Node::raw(self).named_child_count())
+            .map(|i| ::type_sitter::Node::raw(self).named_child(i).unwrap())
+            .filter(|n| !n.is_extra())
+            .next()
+            .map(<ScopeContent<'tree> as ::type_sitter::Node<'tree>>::try_from_raw)
     }
+}
+#[automatically_derived]
+impl<'tree> ::type_sitter::HasOptionalChild<'tree> for SourceFile<'tree> {
+    type Child = ScopeContent<'tree>;
 }
 #[automatically_derived]
 impl<'tree> ::type_sitter::Node<'tree> for SourceFile<'tree> {
@@ -1386,6 +1457,86 @@ pub mod symbols {
         #[inline]
         unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
             debug_assert_eq!(node.kind(), "@");
+            Self(node)
+        }
+        #[inline]
+        fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
+            &self.0
+        }
+        #[inline]
+        fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
+            &mut self.0
+        }
+        #[inline]
+        fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
+            self.0
+        }
+    }
+    #[doc = "Typed node `[`\n\nThis node has no named children\n"]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[repr(transparent)]
+    #[allow(non_camel_case_types)]
+    pub struct LBracket<'tree>(::type_sitter::raw::Node<'tree>);
+    #[automatically_derived]
+    #[allow(unused)]
+    impl<'tree> LBracket<'tree> {}
+    #[automatically_derived]
+    impl<'tree> ::type_sitter::Node<'tree> for LBracket<'tree> {
+        type WithLifetime<'a> = LBracket<'a>;
+        const KIND: &'static str = "[";
+        #[inline]
+        fn try_from_raw(
+            node: ::type_sitter::raw::Node<'tree>,
+        ) -> ::type_sitter::NodeResult<'tree, Self> {
+            if node.kind() == "[" {
+                Ok(Self(node))
+            } else {
+                Err(::type_sitter::IncorrectKind::new::<Self>(node))
+            }
+        }
+        #[inline]
+        unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
+            debug_assert_eq!(node.kind(), "[");
+            Self(node)
+        }
+        #[inline]
+        fn raw(&self) -> &::type_sitter::raw::Node<'tree> {
+            &self.0
+        }
+        #[inline]
+        fn raw_mut(&mut self) -> &mut ::type_sitter::raw::Node<'tree> {
+            &mut self.0
+        }
+        #[inline]
+        fn into_raw(self) -> ::type_sitter::raw::Node<'tree> {
+            self.0
+        }
+    }
+    #[doc = "Typed node `]`\n\nThis node has no named children\n"]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[repr(transparent)]
+    #[allow(non_camel_case_types)]
+    pub struct RBracket<'tree>(::type_sitter::raw::Node<'tree>);
+    #[automatically_derived]
+    #[allow(unused)]
+    impl<'tree> RBracket<'tree> {}
+    #[automatically_derived]
+    impl<'tree> ::type_sitter::Node<'tree> for RBracket<'tree> {
+        type WithLifetime<'a> = RBracket<'a>;
+        const KIND: &'static str = "]";
+        #[inline]
+        fn try_from_raw(
+            node: ::type_sitter::raw::Node<'tree>,
+        ) -> ::type_sitter::NodeResult<'tree, Self> {
+            if node.kind() == "]" {
+                Ok(Self(node))
+            } else {
+                Err(::type_sitter::IncorrectKind::new::<Self>(node))
+            }
+        }
+        #[inline]
+        unsafe fn from_raw_unchecked(node: ::type_sitter::raw::Node<'tree>) -> Self {
+            debug_assert_eq!(node.kind(), "]");
             Self(node)
         }
         #[inline]

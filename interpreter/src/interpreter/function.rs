@@ -113,7 +113,12 @@ pub struct Function {
     pub param: Id<Element>,
     pub module: ModuleId,
     pub body: Id<Element>,
-    pub captures: UnsafeCell<Vec<Id<Element>>>,
+    pub local: UnsafeCell<FunctionLocal>,
+}
+
+#[derive(Debug,Default)]
+pub struct FunctionLocal {
+    pub captures: Vec<Id<Element>>,
 }
 
 impl Function {
@@ -123,24 +128,24 @@ impl Function {
             param,
             module,
             body,
-            captures: UnsafeCell::new(Default::default()),
+            local: UnsafeCell::new(Default::default()),
         }
     }
 }
 
 impl Managed for Function {
-    type Local = ();
+    type Local = FunctionLocal;
 
     type Onwer = Function;
 
     const NAME: &str = "Function";
 
     fn get_local(&self) -> &UnsafeCell<Self::Local> {
-        unimplemented!()
+        &self.local
     }
 
     fn get_local_mut(&mut self) -> &mut UnsafeCell<Self::Local> {
-        unimplemented!()
+        &mut self.local
     }
 
     fn get_owner(&self) -> super::Owner<Self::Onwer>

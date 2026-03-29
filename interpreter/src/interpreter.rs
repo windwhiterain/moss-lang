@@ -9,6 +9,7 @@ use crate::interpreter::expr::Expr;
 use crate::interpreter::expr::HasRef as _;
 use crate::interpreter::file::File;
 use crate::interpreter::file::FileId;
+use crate::interpreter::function::Function;
 use crate::interpreter::module::Module;
 use crate::interpreter::module::ModuleId;
 use crate::interpreter::module::ModuleLocal;
@@ -16,7 +17,6 @@ use crate::interpreter::module::Pools;
 use crate::interpreter::parse::parse_value;
 use crate::interpreter::scope::Scope;
 use crate::interpreter::scope::ScopeAuthored;
-use crate::interpreter::scope::ScopeSource;
 use crate::interpreter::thread::Depend;
 use crate::interpreter::thread::Signal;
 use crate::interpreter::thread::Thread;
@@ -232,20 +232,31 @@ impl Interpreter {
                 ))),
             )
             .get_id();
-        let with_name = self.str2id("with");
-        let with_element_id = self
+        let equal_name = self.str2id("equal");
+        let equal_element_id = self
             .add_element(
-                ElementKey::Name(with_name),
+                ElementKey::Name(equal_name),
                 module_id,
                 Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
-                    BuiltinFunction::With,
+                    BuiltinFunction::Equal,
+                ))),
+            )
+            .get_id();
+        let switch_name = self.str2id("switch");
+        let switch_element_id = self
+            .add_element(
+                ElementKey::Name(switch_name),
+                module_id,
+                Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
+                    BuiltinFunction::Switch,
                 ))),
             )
             .get_id();
         scope.elements = HashMap::from_iter([
             (mod_name, mod_element_id),
             (diagnose_name, diagnose_element_id),
-            (with_name,with_element_id)
+            (equal_name,equal_element_id),
+            (switch_name,switch_element_id),
         ]);
         self.set_element_value(
             self.get_module(module_id).root_scope.unwrap(),
@@ -291,9 +302,12 @@ impl Interpreter {
         let (authored, file_id) = if let Some(path) = &path {
             let file_id = self.find_or_add_file(path);
             let file = erase_mut(self).get_file(file_id);
+            let source = if let Some(scope) = file.tree.root_node().unwrap().scope_content(){
+                Some(scope.unwrap())
+            }else{None};
             (
                 Some(ScopeAuthored {
-                    source: ScopeSource::File(file.tree.root_node().unwrap()),
+                    source,
                     file: file_id,
                 }),
                 Some(file_id),
@@ -772,22 +786,13 @@ pub trait InterpreterLikeMut: InterpreterLike {
         if let Some(authored) = authored {
             let mut cursor = erase_struct!(self.get_file(authored.file).tree.walk());
 
-            let assigns = if let ScopeSource::Scope(scope) = authored.source {
+            let assigns = if let Some(scope) = authored.source {
                 Some(scope.assigns(erase_mut(&mut cursor)))
             } else {
                 None
             }
             .into_iter()
-            .flatten()
-            .chain(
-                if let ScopeSource::File(source_file) = authored.source {
-                    Some(source_file.assigns(&mut cursor))
-                } else {
-                    None
-                }
-                .into_iter()
-                .flatten(),
-            );
+            .flatten();
 
             for assign in assigns {
                 let Some(assign) =
@@ -833,6 +838,33 @@ pub trait InterpreterLikeMut: InterpreterLike {
                         );
                     };
                 }
+            }
+
+            let effects = if let Some(scope) = authored.source {
+                Some(scope.effects(erase_mut(&mut cursor)))
+            } else {
+                None
+            }
+            .into_iter()
+            .flatten();
+            for effect in effects{
+                let Some(value) =
+                    (unsafe { self.grammar_error(Location::Scope(scope_id), effect) })
+                else {
+                    continue;
+                };
+
+                let element_authored = ElementAuthored::Source {
+                    source: ElementSource {
+                        scope: scope_id,
+                        value_source: erase_struct!(value),
+                        key_source: None,
+                    },
+                    scope,
+                };
+                let element =
+                    self.add_element(ElementKey::Temp, module_id, Some(element_authored));
+                let element_id = element.get_id();
             }
         }
         scope

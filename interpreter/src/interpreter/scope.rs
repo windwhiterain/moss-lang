@@ -4,7 +4,7 @@ use type_sitter::{Node, UntypedNode};
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId, module::ModuleId,
+        Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId, function::Function, module::ModuleId
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
@@ -75,22 +75,7 @@ impl Scope {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum ScopeSource {
-    Scope(moss::Scope<'static>),
-    File(moss::SourceFile<'static>),
-}
-
-impl ScopeSource {
-    pub fn source(&self) -> UntypedNode<'static> {
-        match self {
-            ScopeSource::Scope(scope) => scope.upcast(),
-            ScopeSource::File(source_file) => source_file.upcast(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
 pub struct ScopeAuthored {
-    pub source: ScopeSource,
+    pub source: Option<moss::ScopeContent<'static>>,
     pub file: FileId,
 }

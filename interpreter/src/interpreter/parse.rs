@@ -11,7 +11,7 @@ use crate::{
         expr::{self, Expr},
         file::FileId,
         function::{Function, Param},
-        scope::{Scope, ScopeAuthored, ScopeSource},
+        scope::{Scope, ScopeAuthored},
         set::Set,
         value::{self, ValueStorage},
     },
@@ -84,11 +84,14 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
     fn parse_scope(&mut self, scope: moss::Scope<'static>) -> Option<Expr> {
         Some(Expr::Value(ValueStorage::Scope(value::Scope(unsafe {
             // SAFETY: element -> scope
+            let source = if let Some(scope) = scope.scope_content(){
+                Some(self.ip.grammar_error(Location::Element(self.element_id), scope)?)
+            }else{None};
             self.ip
                 .add_scope(
                     Some(self.scope.get_id()),
                     Some(ScopeAuthored {
-                        source: ScopeSource::Scope(scope),
+                        source,
                         file: self.file_id,
                     }),
                     self.scope.module,
@@ -222,27 +225,33 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
         };
         let param_name = self.ip.get_source_str_id(&param_name, self.file_id);
 
+        let function = unsafe { erase_mut(self).ip.get_module_local_mut(self.scope.module) }
+            .pools
+            .functions
+            .insert(Function::new(
+                Id::DUMMY,
+                Id::DUMMY,
+                self.scope.module,
+                Id::DUMMY,
+            ));
+
+        let source = if let Some(scope) = scope.scope_content(){
+                Some(unsafe { self.ip.grammar_error(Location::Element(self.element_id), scope) }?)
+            }else{None};
+
         let scope = unsafe {
             // SAFETY: element -> scope
             erase_mut(self).ip.add_scope(
                 Some(self.scope.get_id()),
                 Some(ScopeAuthored {
-                    source: ScopeSource::Scope(scope),
+                    source,
                     file: self.file_id,
                 }),
                 self.scope.module,
             )
         };
 
-        let function = unsafe { erase_mut(self).ip.get_module_local_mut(scope.module) }
-            .pools
-            .functions
-            .insert(Function::new(
-                scope.get_id(),
-                Id::DUMMY,
-                scope.module,
-                Id::DUMMY,
-            ));
+        function.scope = scope.get_id();
 
         let param = unsafe {
             erase_mut(self).ip.add(
