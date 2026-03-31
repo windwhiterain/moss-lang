@@ -24,6 +24,7 @@ pub struct Scope {
     pub module: ModuleId,
     pub local: UnsafeCell<ScopeLocal>,
     pub depth: usize,
+    pub effects: Vec<Id<Element>>,
 }
 
 impl Managed for Scope {
@@ -67,10 +68,14 @@ impl Scope {
                 diagnoistics: Default::default(),
             }),
             depth,
+            effects:Default::default(),
         }
     }
     pub fn get_file(&self) -> Option<FileId> {
         Some(self.authored?.file)
+    }
+    pub fn visible_elements(&self)->impl Iterator<Item = Id<Element>>{
+        self.elements.values().chain(self.effects.iter()).copied()
     }
 }
 

@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use hashbrown::HashSet;
+use log::error;
 
 use crate::{
     interpreter::{
         Id, InterpreterLikeMut, Managed as _,
-        element::{Element, ElementAuthored},
+        element::{Element, ElementAuthored, ElementKey},
         expr::{self, Expr, HasRef as _},
         function::{
             Function, FunctionBody, FunctionElement, FunctionElementAuthored, FunctionFunction,
@@ -21,6 +22,7 @@ use crate::{
 
 pub struct CallContext<'a, IP> {
     ip: &'a mut IP,
+    expr: &'a mut Expr,
     captures: &'a Vec<Id<Element>>,
     body: &'a FunctionBody,
     module_id: ModuleId,
@@ -43,31 +45,34 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
             .extract_as_function_body()
             .0;
         let body = erase(ctx).ip.get(body);
-        let mut ctx = CallContext {
+        let mut call_ctx = CallContext {
             ip: ctx.ip,
-            captures:&local.captures,
+            expr: ctx.expr,
+            captures: &local.captures,
             body,
             module_id: ctx.module_id,
             element_map: Default::default(),
             scope_map: Default::default(),
             param,
         };
-        Some(ValueStorage::Scope(value::Scope(
-            ctx.run_scope(body.root_scope.unwrap()),
-        )))
+        *call_ctx.expr = Expr::Value(ValueStorage::Scope(value::Scope(
+            call_ctx.run_scope(body.root_scope.unwrap()),
+        )));
+        ctx.run()
     }
-    fn run_set(&mut self,set_id:Id<Set>)->Id<Set>{
+    fn run_set(&mut self, set_id: Id<Set>) -> Id<Set> {
         let set = erase(self).body.sets.get(set_id);
         let mapped_set = unsafe {
             erase_mut(self).ip.add(
-                Set{ elements: Default::default(), module: Default::default() },
+                Set {
+                    elements: Default::default(),
+                    module: Default::default(),
+                },
                 self.module_id,
             )
         };
         for element_id in set.elements.iter().copied() {
-            mapped_set
-                .elements
-                .push(self.run_element(element_id));
+            mapped_set.elements.push(self.run_element(element_id));
         }
         mapped_set.get_id()
     }
@@ -78,14 +83,18 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         let mapped_scope = unsafe { erase_mut(self).ip.add_scope(None, None, self.module_id) };
         let mapped_scope_id = mapped_scope.get_id();
         let scope = self.body.scopes.get(scope_id);
-        for element_id in scope.elements.iter().copied() {
+        for element_id in scope.elements.iter().chain(scope.effects.iter()).copied() {
             let mapped_element_id = self.run_element(element_id);
             if element_id != FunctionBody::PARAM_ELEMENT_ID {
                 let element = self.body.elements.get(element_id);
-                if let Ok(name) = element.key.as_name().copied(){
-                    mapped_scope
-                    .elements
-                    .insert(name, mapped_element_id);
+                match element.key {
+                    ElementKey::Name(name) => {
+                        mapped_scope.elements.insert(name, mapped_element_id);
+                    }
+                    ElementKey::Effect =>{
+                        mapped_scope.effects.push(mapped_element_id);
+                    }
+                    _=>()
                 }
             }
         }
@@ -112,7 +121,7 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
             }),
             FunctionElementAuthored::Value(value) => {
                 let value = match *value {
-                    ValueStorage::Set(value::Set(id))=>{
+                    ValueStorage::Set(value::Set(id)) => {
                         ValueStorage::Set(value::Set(self.run_set(id)))
                     }
                     ValueStorage::Scope(value::Scope(id)) => {
@@ -126,11 +135,15 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
                     }
                     _ => *value,
                 };
-                ElementAuthored::Value(value)
+                if let ValueStorage::Scope(_) = value{
+                    ElementAuthored::Expr(Expr::Value(value))
+                }else{
+                    ElementAuthored::Value(value)
+                }
             }
             FunctionElementAuthored::Capture(id) => {
                 let element_id = self.captures[*id];
-                ElementAuthored::Expr(Expr::Ref(expr::Ref { element_id }))
+                ElementAuthored::Expr(Expr::Ref(expr::Ref { element_id,meta:false }))
             }
         };
         let mapped_id = self
@@ -154,7 +167,8 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         for element_id in &function.captures {
             mapped_funcion
                 .local
-                .get_mut().captures
+                .get_mut()
+                .captures
                 .push(self.run_element(*element_id));
         }
         mapped_funcion.get_id()
@@ -173,7 +187,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyDependContext<'a, IP> {
             return Some(());
         }
         let scope = erase(self).ip.get(scope_id);
-        for element_id in scope.elements.values().copied() {
+        for element_id in scope.visible_elements() {
             self.depend_element(element_id)?
         }
         Some(())
@@ -214,12 +228,12 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
             };
             ctx.depend_scope(function.scope)?;
         }
-        
+
         let body = unsafe { erase_mut(ctx).ip.add(FunctionBody::new(), ctx.module_id) };
         let mut ctx = BodyContext {
             ip: ctx.ip,
             function,
-            captures:&mut local.captures,
+            captures: &mut local.captures,
             body,
             element_map: Default::default(),
             scope_map: Default::default(),
@@ -253,10 +267,14 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
 
         let scope = erase(self).ip.get(scope_id);
         let mut elements = vec![];
+        let mut effects = vec![];
         for element in scope.elements.values().copied() {
             elements.push(self.map_element(element));
         }
-        let function_scope = FunctionScope { elements };
+        for element in scope.effects.iter().copied() {
+            effects.push(self.map_element(element));
+        }
+        let function_scope = FunctionScope { elements,effects };
 
         *self.body.scopes.get_mut(mapped_id) = function_scope;
 
@@ -333,10 +351,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
         let function = erase(self).ip.get(function_id);
         let local = unsafe { erase(self).ip.get_local(function_id) };
         let mut mapped_function = FunctionFunction::new(function.body);
-        for element_id in local.captures
-            .iter()
-            .copied()
-        {
+        for element_id in local.captures.iter().copied() {
             mapped_function.captures.push(self.map_element(element_id));
         }
         self.body.functions.insert(mapped_function)

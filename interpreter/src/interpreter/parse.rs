@@ -269,7 +269,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                 ElementKey::Name(param_name),
                 scope.module,
                 Some(ElementAuthored::Value(ValueStorage::Param(
-                    value::ParamStorage(param.get_id()),
+                    value::Param(param.get_id()),
                 ))),
             )
             .get_id();
@@ -348,6 +348,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                 parse_value(self.ip, bracket.value(), self.element_id, self.scope)
             }
             moss::ValueChild::Set(set) => self.parse_set(set),
+            moss::ValueChild::Trivial(_) => Some(Expr::Value(ValueStorage::Trivial(value::Trivial))),
             _ => Some(Expr::Value(ValueStorage::Error(value::Error))),
         }
     }

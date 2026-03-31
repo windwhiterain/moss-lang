@@ -162,6 +162,7 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Element, Ctx> 
         let element = self.ctx.get(self.value.0);
         let name = match element.key {
             ElementKey::Name(name) => &*self.ctx.id2str(name),
+            ElementKey::Effect => "<Effect>",
             ElementKey::Temp => "<Temp>",
         };
         write!(f, "@{}", name)
@@ -257,8 +258,8 @@ impl ValueLike for Error{
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ParamStorage(pub Id<function::Param>);
-impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, ParamStorage, Ctx> {
+pub struct Param(pub Id<function::Param>);
+impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Param, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let param = self.ctx.get(self.value.0);
         let function = self.ctx.get(param.function);
@@ -272,19 +273,6 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, ParamStorage, 
             write!(f, " ?")?;
         }
         Ok(())
-    }
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Param{
-    pub r#type: Option<ValueStorage>,
-}
-impl ValueLike for Param{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        if let Some(r#type) = self.r#type{
-            r#type
-        }else{
-            ValueStorage::Error(Error)
-        }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,7 +311,7 @@ pub enum ValueStorage {
     BuiltinFunction(BuiltinFunction),
     Error(Error),
     Trivial(Trivial),
-    Param(ParamStorage),
+    Param(Param),
     Diagnostic(Diagnostic),
 }
 

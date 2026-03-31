@@ -388,7 +388,6 @@ impl Interpreter {
             .unresolved_modules
             .retain(|key| unsafe { self.get_module_local(key) }.is_resolved());
         log::error!("run)");
-        log::error!("interpreter: {:#?}", self.modules);
     }
 }
 
@@ -863,8 +862,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     scope,
                 };
                 let element =
-                    self.add_element(ElementKey::Temp, module_id, Some(element_authored));
+                    self.add_element(ElementKey::Effect, module_id, Some(element_authored));
                 let element_id = element.get_id();
+                scope.effects.push(element_id);
             }
         }
         scope
@@ -969,7 +969,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
         if scope.module != module_id {
             return;
         }
-        for element_id in scope.elements.values().copied() {
+        for element_id in scope.visible_elements() {
             unsafe { self.run_module_element(element_id, module_id) };
         }
     }
@@ -1009,27 +1009,30 @@ pub trait InterpreterLikeMut: InterpreterLike {
             return None;
         };
 
+        let mut value = None;
+        let mut solved = true;
         let resolved_value = self.run_value(element_id);
-
-        {
-            let element_local = unsafe { self.get_local_mut(element_id) };
-            element_local.is_running = false;
-            if element_local.dependency_count > 0 {
-                return None;
-            }
+        let element_local = unsafe { self.get_local(element_id) };
+        if element_local.dependency_count > 0 {
+            solved = false;
         }
-
-        self.set_element_value(
-            element_id,
-            resolved_value.unwrap_or(ValueStorage::Error(value::Error)),
-        );
-
-        resolved_value
+        if let Some(resolved_value) = resolved_value{
+            value = Some(resolved_value);
+        }
+        if solved{
+            self.set_element_value(
+                element_id,
+                value.unwrap_or(ValueStorage::Error(value::Error)),
+            );
+        }
+        let element_local = unsafe { self.get_local_mut(element_id) };
+        element_local.is_running = false;
+        value
     }
     /// # Panic
     /// - when concurrent, element is not in local thread.
     fn run_value(&mut self, element_id: Id<Element>) -> Option<ValueStorage> {
-        run::Context::run_value(self, element_id)
+        run::Context::run_expr(self, element_id)
     }
     /// # Panic
     /// - when concurrent, element is not in local thread.

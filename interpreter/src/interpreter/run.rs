@@ -2,12 +2,7 @@ use type_sitter::{Node, UntypedNode};
 
 use crate::{
     interpreter::{
-        Id, InterpreterLikeMut, Location, Managed,
-        diagnose::Diagnostic,
-        element::Element,
-        expr::{self, Expr},
-        module::ModuleId,
-        value::{self, ValueStorage},
+        Id, InterpreterLikeMut, Location, Managed, diagnose::Diagnostic, element::Element, expr::{self, Expr}, function::Param, module::ModuleId, value::{self, ValueStorage}
     },
     utils::{erase, erase_mut},
 };
@@ -24,13 +19,12 @@ pub struct Context<'a, IP> {
 }
 
 impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
-    pub fn run_value(ip: &'a mut IP, element_id: Id<Element>) -> Option<ValueStorage> {
+    pub fn run_expr(ip: &'a mut IP, element_id: Id<Element>) -> Option<ValueStorage> {
         let element = erase(ip).get(element_id);
         let module_id = element.module;
         let source = element.source.map(|x| x.value_source.upcast());
         let expr = unsafe { erase_mut(ip).get_local_mut(element_id) }
-            .expr
-            .as_mut()
+            .expr.as_mut()
             .unwrap();
         let mut ctx = Self {
             ip,
@@ -39,21 +33,33 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
             source,
             expr,
         };
-        match ctx.expr {
-            Expr::Ref(..) => ctx.run_ref(),
-            Expr::Find(..) => ctx.run_find(),
-            Expr::Call(..) => ctx.run_call(),
-            Expr::FunctionBody(..) => function::BodyContext::run(&mut ctx),
-            Expr::Value(value) => Some(*value),
+        ctx.run()
+    }
+    fn run(&mut self) -> Option<ValueStorage>{
+        match &self.expr {
+            Expr::Ref(_) => self.run_ref(),
+            Expr::Find(_) => self.run_find(),
+            Expr::Call(_) => self.run_call(),
+            Expr::FunctionBody(_) => function::BodyContext::run(self),
+            Expr::Value(value) => {
+                if let ValueStorage::Scope(scope) = value{
+                    let scope = erase(self.ip).get(scope.0);
+                    for effect in scope.effects.iter().copied(){
+                        self.ip.depend_element(self.element.get_id(), effect, None)?;
+                    }
+                }
+                Some(*value)
+            },
         }
     }
     fn run_ref(&mut self) -> Option<ValueStorage> {
         let r#ref = self.expr.extract_as_ref();
         self.ip
-            .depend_element(self.element.get_id(), r#ref.element_id, self.source)
+        .depend_element(self.element.get_id(), r#ref.element_id, self.source)
     }
     fn run_find(&mut self) -> Option<ValueStorage> {
         let find = self.expr.extract_as_find();
+        let meta = find.meta;
         let scope_id = self.element.source.as_ref().unwrap().scope;
         let find_element_id = if let Some(target) = find.target {
             let target = self
@@ -77,11 +83,10 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.ip.find_element(scope_id, find.name, true)
         };
         if let Some(find_element_id) = find_element_id {
-            if !find.meta {
+            if !meta {
                 *self.expr = Expr::Ref(expr::Ref {
                     element_id: find_element_id,
                 });
-
                 self.ip
                     .depend_element(self.element.get_id(), find_element_id, self.source)
             } else {

@@ -1,14 +1,8 @@
-a = 1;
-diagnostic = diagnose {on = 1; source = @a; text = "should be 2";};
-
 check = param -> {
     a = param;
-    diagnostic = diagnose {
-        on = param;
-        source = @a;
-        text = "should be 0";
-    };
-    ret = with {value = a; effects = {diagnostic,};};
+    diagnose {source = @a; text = "should be 2";};
 };
-diagnostic1 = (check 1).ret;
-diagnostic2 = (check 0).ret;
+
+
+b = check 1;
+c = check 2;

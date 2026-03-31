@@ -1,1 +1,1 @@
-a = switch {index = 1; set = {0, 1, 2,};};
+a = switch {index = 1; set = [0, 1, 2,];};

@@ -45,7 +45,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
     }
     fn run_mod(&mut self) -> Option<ValueStorage> {
         if let Some(function) = merge_params!(self.ip, self.param) {
-            return Some(ValueStorage::Param(value::ParamStorage(
+            return Some(ValueStorage::Param(value::Param(
                 unsafe {
                     self.ip.add(
                         Param {
@@ -90,7 +90,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.source,
         )?;
         if let Some(function) = merge_params!(self.ip, text, source_element) {
-            return Some(ValueStorage::Param(value::ParamStorage(unsafe {
+            return Some(ValueStorage::Param(value::Param(unsafe {
                 self.ip
                     .add(
                         Param {
@@ -106,6 +106,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let source_element = source_element.as_element().ok()?.0;
         let text = text.as_string().ok()?.0;
         if self.ip.is_local(source_element) {
+            log::error!("diagnose: {:?}",source_element);
             unsafe {
                 self.ip.diagnose(
                     Location::Element(source_element),
@@ -150,7 +151,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.source,
         )?;
         if let Some(function) = merge_params!(self.ip, index, set) {
-            return Some(ValueStorage::Param(value::ParamStorage(unsafe {
+            return Some(ValueStorage::Param(value::Param(unsafe {
                 self.ip
                     .add(
                         Param {

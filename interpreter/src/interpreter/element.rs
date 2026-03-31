@@ -14,6 +14,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, EnumExtract)]
 pub enum ElementKey {
     Name(StringId),
+    Effect,
     Temp,
 }
 

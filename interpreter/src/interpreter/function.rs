@@ -1,4 +1,5 @@
 use crate::interpreter::set::Set;
+use crate::utils::concurrent_string_interner::StringId;
 use crate::utils::typed_key::Vec as KeyVec;
 use crate::{
     interpreter::{
@@ -39,11 +40,13 @@ impl FunctionElement {
 #[derive(Debug)]
 pub struct FunctionScope {
     pub elements: Vec<Id<Element>>,
+    pub effects: Vec<Id<Element>>,
 }
 
 impl FunctionScope {
     pub const DUMMY: Self = Self {
         elements: Default::default(),
+        effects: Default::default(),
     };
 }
 
