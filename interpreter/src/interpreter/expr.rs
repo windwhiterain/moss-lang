@@ -33,16 +33,16 @@ impl HasRef for Find {
 
 #[derive(Clone, Debug)]
 pub struct Ref {
-    pub element_id: Id<Element>,
+    pub element: Id<Element>,
 }
 
 impl HasRef for Ref {
     fn map_ref(&mut self, mut map: impl FnMut(Id<Element>) -> Id<Element>) {
-        self.element_id = map(self.element_id);
+        self.element = map(self.element);
     }
 
     fn iter_ref(&self, mut map: impl FnMut(Id<Element>)) {
-        map(self.element_id);
+        map(self.element);
     }
 }
 

@@ -4,12 +4,7 @@ use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{
-        Id, InterpreterLikeMut, Location, Managed as _, SRC_FILE_EXTENSION, SRC_PATH,
-        diagnose::Diagnostic,
-        element::Element,
-        function::Param,
-        module::ModuleId,
-        value::{self, BuiltinFunction, ValueStorage},
+        Id, InterpreterLikeMut, Location, Managed as _, SRC_FILE_EXTENSION, SRC_PATH, diagnose::Diagnostic, element::Element, expr::{self, Expr}, function::Param, module::ModuleId, value::{self, BuiltinFunction, ValueStorage}
     },
     merge_params,
     utils::erase,
@@ -21,6 +16,7 @@ pub struct Context<'a, IP> {
     module_id: ModuleId,
     source: Option<UntypedNode<'static>>,
     param: ValueStorage,
+    expr: &'a mut Expr,
 }
 
 impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
@@ -35,6 +31,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             module_id: ctx.module_id,
             source: ctx.source,
             param,
+            expr: ctx.expr
         };
         match builtin_function {
             BuiltinFunction::Mod => ctx.run_mod(),
@@ -77,11 +74,12 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
     }
     fn run_diagnose(&mut self) -> Option<ValueStorage> {
         let scope = self.param.as_scope().ok()?.0;
+        let condition_key = self.ip.str2id("condition");
         let source_key = self.ip.str2id("source");
         let text_key = self.ip.str2id("text");
-        let text = self.ip.depend_element(
+        let condition = self.ip.depend_element(
             self.element_id,
-            self.ip.find_element(scope, text_key, false)?,
+            self.ip.find_element(scope, condition_key, false)?,
             self.source,
         )?;
         let source_element = self.ip.depend_element(
@@ -89,7 +87,12 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.ip.find_element(scope, source_key, false)?,
             self.source,
         )?;
-        if let Some(function) = merge_params!(self.ip, text, source_element) {
+        let text = self.ip.depend_element(
+            self.element_id,
+            self.ip.find_element(scope, text_key, false)?,
+            self.source,
+        )?;
+        if let Some(function) = merge_params!(self.ip, condition, source_element, text) {
             return Some(ValueStorage::Param(value::Param(unsafe {
                 self.ip
                     .add(
@@ -103,15 +106,13 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
                     .get_id()
             })));
         }
-        let source_element = source_element.as_element().ok()?.0;
+        let source = source_element.as_element().ok()?.0;
         let text = text.as_string().ok()?.0;
-        if self.ip.is_local(source_element) {
-            log::error!("diagnose: {:?}",source_element);
+        if self.ip.is_local(source) {
+            log::error!("diagnose: {:?}", source);
             unsafe {
-                self.ip.diagnose(
-                    Location::Element(source_element),
-                    Diagnostic::Custom { text },
-                )
+                self.ip
+                    .diagnose(Location::Element(source), Diagnostic::Custom { text })
             };
         }
         Some(ValueStorage::Trivial(value::Trivial))
@@ -119,24 +120,48 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
     fn run_equal(&mut self) -> Option<ValueStorage> {
         let set = self.param.as_set().ok()?;
         let set = erase(self.ip.get(set.0));
-        let mut elements = set.elements.iter().copied();
         let mut equal = true;
-        if let Some(element) = elements.next() {
-            let value = self
+        let mut param = None;
+        let mut value = None;
+        for element in set.elements.iter().copied() {
+            let other_value = self
                 .ip
                 .depend_element(self.element_id, element, self.source)?;
-            for element in elements {
-                let other_value = self
-                    .ip
-                    .depend_element(self.element_id, element, self.source)?;
-                if other_value != value {
-                    equal = false;
+            if let ValueStorage::Param(_) = other_value {
+                other_value.merge_param(self.ip, &mut param);
+            } else {
+                if let Some(value) = value{
+                    if value != other_value{
+                        equal = false;
+                        break;
+                    }
+                }else{
+                    value = Some(other_value);
                 }
             }
         }
-        Some(ValueStorage::Int(value::Int(if equal { 1 } else { 0 })))
+        Some(if !equal {
+            ValueStorage::Int(value::Int(0))
+        } else {
+            if let Some(function) = param {
+                ValueStorage::Param(value::Param(unsafe {
+                    self.ip
+                        .add(
+                            Param {
+                                function,
+                                element: self.element_id,
+                                r#type: Some(ValueStorage::IntType(value::IntType)),
+                            },
+                            self.module_id,
+                        )
+                        .get_id()
+                }))
+            } else {
+                ValueStorage::Int(value::Int(1))
+            }
+        })
     }
-    fn run_switch(&mut self) -> Option<ValueStorage>{
+    fn run_switch(&mut self) -> Option<ValueStorage> {
         let scope = self.param.as_scope().ok()?.0;
         let index_key = self.ip.str2id("index");
         let set_key = self.ip.str2id("set");
@@ -150,7 +175,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.ip.find_element(scope, set_key, false)?,
             self.source,
         )?;
-        if let Some(function) = merge_params!(self.ip, index, set) {
+        if let Some(function) = merge_params!(self.ip, set) {
             return Some(ValueStorage::Param(value::Param(unsafe {
                 self.ip
                     .add(
@@ -164,12 +189,34 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
                     .get_id()
             })));
         }
-        let index= index.as_int().ok()?.0;
         let set = set.as_set().ok()?.0;
         let set = self.ip.get(set);
-        if let Some(value) = set.elements.get(index).copied(){
-            Some(self.ip.depend_element(self.element_id, value, self.source)?)
-        }else{
+        if let Some(function) = merge_params!(self.ip, index) {
+            for element in erase(&set.elements).iter().copied() {
+                self.ip
+                    .depend_element(self.element_id, element, self.source)?;
+            }
+            return Some(ValueStorage::Param(value::Param(unsafe {
+                self.ip
+                    .add(
+                        Param {
+                            function,
+                            element: self.element_id,
+                            r#type: None,
+                        },
+                        self.module_id,
+                    )
+                    .get_id()
+            })));
+        }
+        let index = index.as_int().ok()?.0;
+        if let Some(element) = set.elements.get(index).copied() {
+            *self.expr = Expr::Ref(expr::Ref{element}); 
+            Some(
+                self.ip
+                    .depend_element(self.element_id, element, self.source)?,
+            )
+        } else {
             Some(ValueStorage::Error(value::Error))
         }
     }

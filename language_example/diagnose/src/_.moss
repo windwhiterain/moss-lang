@@ -1,6 +1,9 @@
+a = 1;
+diagnose {condition = a; source = @a; text = "should be 2";};
+
 check = param -> {
-    a = param;
-    diagnose {source = @a; text = "should be 2";};
+    switch {index = equal [param, 2,]; set = [diagnose {condition = param; source = @param; text = "should be 2";},(),];};
+
 };
 
 

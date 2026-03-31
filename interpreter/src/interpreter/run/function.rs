@@ -143,7 +143,7 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
             }
             FunctionElementAuthored::Capture(id) => {
                 let element_id = self.captures[*id];
-                ElementAuthored::Expr(Expr::Ref(expr::Ref { element_id,meta:false }))
+                ElementAuthored::Expr(Expr::Ref(expr::Ref { element: element_id }))
             }
         };
         let mapped_id = self

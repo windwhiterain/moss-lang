@@ -55,7 +55,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
     fn run_ref(&mut self) -> Option<ValueStorage> {
         let r#ref = self.expr.extract_as_ref();
         self.ip
-        .depend_element(self.element.get_id(), r#ref.element_id, self.source)
+        .depend_element(self.element.get_id(), r#ref.element, self.source)
     }
     fn run_find(&mut self) -> Option<ValueStorage> {
         let find = self.expr.extract_as_find();
@@ -85,7 +85,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
         if let Some(find_element_id) = find_element_id {
             if !meta {
                 *self.expr = Expr::Ref(expr::Ref {
-                    element_id: find_element_id,
+                    element: find_element_id,
                 });
                 self.ip
                     .depend_element(self.element.get_id(), find_element_id, self.source)
