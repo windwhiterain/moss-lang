@@ -6,7 +6,6 @@ use crate::{
         diagnose::Diagnostic,
         element::Element,
         expr::{self, Expr},
-        function::Param,
         module::ModuleId,
         scope::Scope,
         value::{self, ValueStorage},

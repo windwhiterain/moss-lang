@@ -1,7 +1,5 @@
-use slotmap::new_key_type;
-
 use crate::{
-    interpreter::{Id, Managed, element::Element, module::ModuleId, value::ValueStorage},
+    interpreter::{Id, Managed, element::Element, module::ModuleId},
     utils::unsafe_cell::UnsafeCell,
 };
 

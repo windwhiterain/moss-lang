@@ -15,7 +15,7 @@ use std::hash::Hasher;
 pub struct StringId(usize);
 
 impl StringId {
-    const DUMMY: StringId = StringId(0);
+    pub const DUMMY: StringId = StringId(0);
 }
 
 pub struct SymbolAllocator {

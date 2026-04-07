@@ -1,11 +1,8 @@
 use std::collections::HashMap;
 
-use type_sitter::{Node, UntypedNode};
-
 use crate::{
     interpreter::{
-        Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId,
-        function::Function, module::ModuleId,
+        Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId, module::ModuleId,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };

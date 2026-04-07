@@ -1,5 +1,4 @@
 use crate::interpreter::set::Set;
-use crate::utils::concurrent_string_interner::StringId;
 use crate::utils::typed_key::Vec as KeyVec;
 use crate::{
     interpreter::{

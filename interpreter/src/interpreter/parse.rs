@@ -10,7 +10,7 @@ use crate::{
         element::{Element, ElementAuthored, ElementKey, ElementSource},
         expr::{self, Expr},
         file::FileId,
-        function::{Function, Param},
+        function::Param,
         scope::{Scope, ScopeAuthored},
         set::Set,
         value::{self, ValueStorage},
@@ -341,7 +341,6 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             moss::ValueChild::Trivial(_) => {
                 Some(Expr::Value(ValueStorage::Trivial(value::Trivial)))
             }
-            _ => Some(Expr::Value(ValueStorage::Error(value::Error))),
         }
     }
 }

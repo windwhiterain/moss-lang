@@ -49,7 +49,7 @@ impl fmt::Display for BuiltinFunction {
 }
 
 impl ValueLike for BuiltinFunction {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::FunctionType(FunctionType))
     }
 }
@@ -63,7 +63,7 @@ impl Display for Int {
     }
 }
 impl ValueLike for Int {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::IntType(IntType))
     }
 }
@@ -75,7 +75,7 @@ impl Display for IntType {
     }
 }
 impl ValueLike for IntType {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::TypeType(TypeType))
     }
 }
@@ -87,7 +87,7 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, String, Ctx> {
     }
 }
 impl ValueLike for String {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::StringType(StringType))
     }
 }
@@ -99,7 +99,7 @@ impl Display for StringType {
     }
 }
 impl ValueLike for StringType {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::TypeType(TypeType))
     }
 }
@@ -112,7 +112,7 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Set, Ctx> {
     }
 }
 impl ValueLike for Set {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::SetType(SetType))
     }
 }
@@ -124,7 +124,7 @@ impl Display for SetType {
     }
 }
 impl ValueLike for SetType {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::TypeType(TypeType))
     }
 }
@@ -147,7 +147,7 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Scope, Ctx> {
     }
 }
 impl ValueLike for Scope {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::ScopeType(ScopeType))
     }
 }
@@ -159,7 +159,7 @@ impl Display for ScopeType {
     }
 }
 impl ValueLike for ScopeType {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::TypeType(TypeType))
     }
 }
@@ -177,7 +177,7 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Element, Ctx> 
     }
 }
 impl ValueLike for Element {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::ElementType(ElementType))
     }
 }
@@ -189,7 +189,7 @@ impl Display for ElementType {
     }
 }
 impl ValueLike for ElementType {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::TypeType(TypeType))
     }
 }
@@ -201,7 +201,7 @@ impl Display for Function {
     }
 }
 impl ValueLike for Function {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::FunctionType(FunctionType))
     }
 }
@@ -213,7 +213,7 @@ impl Display for FunctionBody {
     }
 }
 impl ValueLike for FunctionBody {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::Trivial(Trivial))
     }
 }
@@ -225,7 +225,7 @@ impl Display for FunctionType {
     }
 }
 impl ValueLike for FunctionType {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::TypeType(TypeType))
     }
 }
@@ -237,7 +237,7 @@ impl Display for TypeType {
     }
 }
 impl ValueLike for TypeType {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::TypeType(TypeType))
     }
 }
@@ -249,7 +249,7 @@ impl Display for Trivial {
     }
 }
 impl ValueLike for Trivial {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::Trivial(Trivial))
     }
 }
@@ -261,7 +261,7 @@ impl Display for Error {
     }
 }
 impl ValueLike for Error {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::Error(Error))
     }
 }
@@ -297,7 +297,7 @@ impl Display for Diagnostic {
     }
 }
 impl ValueLike for Diagnostic {
-    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::TypeType(TypeType))
     }
 }
