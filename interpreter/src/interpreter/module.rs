@@ -3,7 +3,8 @@ use crate::{
     interpreter::{
         Id,
         file::FileId,
-        function::{Function, FunctionBody, Param}, set::Set,
+        function::{Function, FunctionBody, Param},
+        set::Set,
     },
     utils::pool::Pool,
 };

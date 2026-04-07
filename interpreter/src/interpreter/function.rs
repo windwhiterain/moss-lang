@@ -17,11 +17,11 @@ use crate::{
 pub enum FunctionElementAuthored {
     Expr(Expr),
     Value(ValueStorage),
-    Capture(usize),
+    Capture(Id<Element>),
 }
 
-#[derive(Debug,Default)]
-pub struct FunctionSet{
+#[derive(Debug, Default)]
+pub struct FunctionSet {
     pub elements: Vec<Id<Element>>,
 }
 #[derive(Debug)]
@@ -52,14 +52,16 @@ impl FunctionScope {
 
 #[derive(Debug)]
 pub struct FunctionFunction {
-    pub body: Id<Element>,
+    pub scope: Id<Scope>,
+    pub param: Id<Element>,
     pub captures: Vec<Id<Element>>,
 }
 
 impl FunctionFunction {
-    pub fn new(body: Id<Element>) -> Self {
+    pub fn new(scope: Id<Scope>, param: Id<Element>) -> Self {
         Self {
-            body,
+            scope,
+            param,
             captures: Default::default(),
         }
     }
@@ -67,7 +69,7 @@ impl FunctionFunction {
 
 #[derive(Debug)]
 pub struct FunctionBody {
-    pub sets: KeyVec<Id<Set>,FunctionSet>,
+    pub sets: KeyVec<Id<Set>, FunctionSet>,
     pub scopes: KeyVec<Id<Scope>, FunctionScope>,
     pub elements: KeyVec<Id<Element>, FunctionElement>,
     pub functions: KeyVec<Id<Function>, FunctionFunction>,
@@ -95,11 +97,11 @@ impl Managed for FunctionBody {
     const NAME: &str = "FunctionBody";
 
     fn get_local(&self) -> &UnsafeCell<Self::Local> {
-        todo!()
+        unimplemented!()
     }
 
     fn get_local_mut(&mut self) -> &mut UnsafeCell<Self::Local> {
-        todo!()
+        unimplemented!()
     }
 
     fn get_owner(&self) -> super::Owner<Self::Onwer>
@@ -116,12 +118,6 @@ pub struct Function {
     pub param: Id<Element>,
     pub module: ModuleId,
     pub body: Id<Element>,
-    pub local: UnsafeCell<FunctionLocal>,
-}
-
-#[derive(Debug,Default)]
-pub struct FunctionLocal {
-    pub captures: Vec<Id<Element>>,
 }
 
 impl Function {
@@ -131,24 +127,23 @@ impl Function {
             param,
             module,
             body,
-            local: UnsafeCell::new(Default::default()),
         }
     }
 }
 
 impl Managed for Function {
-    type Local = FunctionLocal;
+    type Local = ();
 
     type Onwer = Function;
 
     const NAME: &str = "Function";
 
     fn get_local(&self) -> &UnsafeCell<Self::Local> {
-        &self.local
+        unimplemented!()
     }
 
     fn get_local_mut(&mut self) -> &mut UnsafeCell<Self::Local> {
-        &mut self.local
+        unimplemented!()
     }
 
     fn get_owner(&self) -> super::Owner<Self::Onwer>
@@ -158,7 +153,6 @@ impl Managed for Function {
         super::Owner::Module(self.module)
     }
 }
-
 
 #[derive(Debug)]
 pub struct Param {

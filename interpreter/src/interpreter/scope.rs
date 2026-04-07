@@ -4,7 +4,8 @@ use type_sitter::{Node, UntypedNode};
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId, function::Function, module::ModuleId
+        Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId,
+        function::Function, module::ModuleId,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
@@ -68,13 +69,13 @@ impl Scope {
                 diagnoistics: Default::default(),
             }),
             depth,
-            effects:Default::default(),
+            effects: Default::default(),
         }
     }
     pub fn get_file(&self) -> Option<FileId> {
         Some(self.authored?.file)
     }
-    pub fn visible_elements(&self)->impl Iterator<Item = Id<Element>>{
+    pub fn visible_elements(&self) -> impl Iterator<Item = Id<Element>> {
         self.elements.values().chain(self.effects.iter()).copied()
     }
 }

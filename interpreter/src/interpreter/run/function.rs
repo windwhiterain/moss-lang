@@ -1,8 +1,5 @@
 use std::collections::HashMap;
 
-use hashbrown::HashSet;
-use log::error;
-
 use crate::{
     interpreter::{
         Id, InterpreterLikeMut, Managed as _,
@@ -23,7 +20,6 @@ use crate::{
 pub struct CallContext<'a, IP> {
     ip: &'a mut IP,
     expr: &'a mut Expr,
-    captures: &'a Vec<Id<Element>>,
     body: &'a FunctionBody,
     module_id: ModuleId,
     element_map: Vec<Option<Id<Element>>>,
@@ -38,17 +34,15 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         param: Id<Element>,
     ) -> Option<ValueStorage> {
         let function = erase(ctx.ip).get(function.0);
-        let local = unsafe { erase(ctx.ip).get_local(function.get_id()) };
         let body = ctx
             .ip
-            .depend_child_element(ctx.element.get_id(), function.body)?
+            .depend_child_element(ctx.element.get_id(), function.body, false)?
             .extract_as_function_body()
             .0;
         let body = erase(ctx).ip.get(body);
         let mut call_ctx = CallContext {
             ip: ctx.ip,
             expr: ctx.expr,
-            captures: &local.captures,
             body,
             module_id: ctx.module_id,
             element_map: Default::default(),
@@ -91,10 +85,10 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
                     ElementKey::Name(name) => {
                         mapped_scope.elements.insert(name, mapped_element_id);
                     }
-                    ElementKey::Effect =>{
+                    ElementKey::Effect => {
                         mapped_scope.effects.push(mapped_element_id);
                     }
-                    _=>()
+                    _ => (),
                 }
             }
         }
@@ -135,15 +129,10 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
                     }
                     _ => *value,
                 };
-                if let ValueStorage::Scope(_) = value{
-                    ElementAuthored::Expr(Expr::Value(value))
-                }else{
-                    ElementAuthored::Value(value)
-                }
+                ElementAuthored::Expr(Expr::Value(value))
             }
             FunctionElementAuthored::Capture(id) => {
-                let element_id = self.captures[*id];
-                ElementAuthored::Expr(Expr::Ref(expr::Ref { element: element_id }))
+                ElementAuthored::Expr(Expr::Ref(expr::Ref { element: *id }))
             }
         };
         let mapped_id = self
@@ -158,58 +147,18 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
     }
     fn run_function(&mut self, id: Id<Function>) -> Id<Function> {
         let function = erase(self).body.functions.get(id);
-        let mapped_funcion = unsafe {
-            erase_mut(self).ip.add(
-                Function::new(Id::DUMMY, Id::DUMMY, ModuleId::default(), function.body),
-                self.module_id,
-            )
-        };
-        for element_id in &function.captures {
-            mapped_funcion
-                .local
-                .get_mut()
-                .captures
-                .push(self.run_element(*element_id));
-        }
+        let scope = self.run_scope(function.scope);
+        let param = self.run_element(function.param);
+        let mapped_funcion = erase_mut(self)
+            .ip
+            .add_function(self.module_id, scope, param);
         mapped_funcion.get_id()
-    }
-}
-
-pub struct BodyDependContext<'a, IP: InterpreterLikeMut> {
-    ip: &'a mut IP,
-    element_id: Id<Element>,
-    resolved_scopes: HashSet<Id<Scope>>,
-}
-
-impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyDependContext<'a, IP> {
-    fn depend_scope(&mut self, scope_id: Id<Scope>) -> Option<()> {
-        if !self.resolved_scopes.insert(scope_id) {
-            return Some(());
-        }
-        let scope = erase(self).ip.get(scope_id);
-        for element_id in scope.visible_elements() {
-            self.depend_element(element_id)?
-        }
-        Some(())
-    }
-    fn depend_element(&mut self, element_id: Id<Element>) -> Option<()> {
-        let value = self.ip.depend_child_element(self.element_id, element_id)?;
-        match value {
-            ValueStorage::Scope(value::Scope(scope_id)) => self.depend_scope(scope_id),
-            ValueStorage::Function(value::Function(id)) => self.depend_function(id),
-            _ => Some(()),
-        }
-    }
-    fn depend_function(&mut self, function_id: Id<Function>) -> Option<()> {
-        let function = self.ip.get(function_id);
-        self.depend_element(function.body)
     }
 }
 
 pub struct BodyContext<'a, IP: InterpreterLikeMut> {
     ip: &'a mut IP,
     function: &'a Function,
-    captures: &'a mut Vec<Id<Element>>,
     body: &'a mut FunctionBody,
     element_map: HashMap<Id<Element>, Id<Element>>,
     scope_map: HashMap<Id<Scope>, Id<Scope>>,
@@ -219,21 +168,11 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
     pub fn run(ctx: &'a mut super::Context<'b, IP>) -> Option<ValueStorage> {
         let function_body = ctx.expr.extract_as_function_body();
         let function = erase(ctx).ip.get(function_body.function);
-        let local = unsafe { erase_mut(ctx).ip.get_local_mut(function.get_id()) };
-        {
-            let mut ctx = BodyDependContext {
-                ip: ctx.ip,
-                element_id: ctx.element.get_id(),
-                resolved_scopes: Default::default(),
-            };
-            ctx.depend_scope(function.scope)?;
-        }
 
         let body = unsafe { erase_mut(ctx).ip.add(FunctionBody::new(), ctx.module_id) };
         let mut ctx = BodyContext {
             ip: ctx.ip,
             function,
-            captures: &mut local.captures,
             body,
             element_map: Default::default(),
             scope_map: Default::default(),
@@ -274,7 +213,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
         for element in scope.effects.iter().copied() {
             effects.push(self.map_element(element));
         }
-        let function_scope = FunctionScope { elements,effects };
+        let function_scope = FunctionScope { elements, effects };
 
         *self.body.scopes.get_mut(mapped_id) = function_scope;
 
@@ -309,9 +248,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
                                 expr
                             })
                         } else {
-                            let id = self.captures.len();
-                            self.captures.push(param.element);
-                            FunctionElementAuthored::Capture(id)
+                            FunctionElementAuthored::Capture(param.element)
                         }
                     }
                     ValueStorage::Scope(value::Scope(id)) => {
@@ -349,11 +286,10 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> BodyContext<'a, IP> {
     }
     fn map_function(&mut self, function_id: Id<Function>) -> Id<Function> {
         let function = erase(self).ip.get(function_id);
-        let local = unsafe { erase(self).ip.get_local(function_id) };
-        let mut mapped_function = FunctionFunction::new(function.body);
-        for element_id in local.captures.iter().copied() {
-            mapped_function.captures.push(self.map_element(element_id));
-        }
+        let mapped_function = FunctionFunction::new(
+            self.map_scope(function.scope),
+            self.map_element(function.param),
+        );
         self.body.functions.insert(mapped_function)
     }
 }

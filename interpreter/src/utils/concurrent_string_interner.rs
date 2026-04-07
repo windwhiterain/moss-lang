@@ -14,7 +14,7 @@ use std::hash::Hasher;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StringId(usize);
 
-impl StringId{
+impl StringId {
     const DUMMY: StringId = StringId(0);
 }
 

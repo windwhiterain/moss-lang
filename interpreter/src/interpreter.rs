@@ -6,6 +6,7 @@ use crate::interpreter::element::ElementAuthored;
 use crate::interpreter::element::ElementKey;
 use crate::interpreter::element::ElementSource;
 use crate::interpreter::expr::Expr;
+use crate::interpreter::expr::FunctionBody;
 use crate::interpreter::expr::HasRef as _;
 use crate::interpreter::file::File;
 use crate::interpreter::file::FileId;
@@ -18,6 +19,7 @@ use crate::interpreter::parse::parse_value;
 use crate::interpreter::scope::Scope;
 use crate::interpreter::scope::ScopeAuthored;
 use crate::interpreter::thread::Depend;
+use crate::interpreter::thread::Resolve;
 use crate::interpreter::thread::Signal;
 use crate::interpreter::thread::Thread;
 use crate::interpreter::thread::ThreadId;
@@ -64,9 +66,9 @@ pub mod file;
 pub mod function;
 pub mod module;
 pub mod scope;
+pub mod set;
 pub mod thread;
 pub mod value;
-pub mod set;
 
 mod parse;
 mod run;
@@ -252,15 +254,90 @@ impl Interpreter {
                 ))),
             )
             .get_id();
+        let type_of_name = self.str2id("type_of");
+        let type_of_id = self
+            .add_element(
+                ElementKey::Name(type_of_name),
+                module_id,
+                Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
+                    BuiltinFunction::TypeOf,
+                ))),
+            )
+            .get_id();
+        let with_type_name = self.str2id("with_type");
+        let with_type_id = self
+            .add_element(
+                ElementKey::Name(with_type_name),
+                module_id,
+                Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
+                    BuiltinFunction::WithType,
+                ))),
+            )
+            .get_id();
+        let find_name = self.str2id("find");
+        let find_id = self
+            .add_element(
+                ElementKey::Name(find_name),
+                module_id,
+                Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
+                    BuiltinFunction::Find,
+                ))),
+            )
+            .get_id();
+        let value_of_name = self.str2id("value_of");
+        let value_of_id = self
+            .add_element(
+                ElementKey::Name(value_of_name),
+                module_id,
+                Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
+                    BuiltinFunction::ValueOf,
+                ))),
+            )
+            .get_id();
+        let int_name = self.str2id("Int");
+        let int_id = self
+            .add_element(
+                ElementKey::Name(int_name),
+                module_id,
+                Some(ElementAuthored::Value(ValueStorage::IntType(
+                    value::IntType,
+                ))),
+            )
+            .get_id();
+        let string_name = self.str2id("String");
+        let string_id = self
+            .add_element(
+                ElementKey::Name(string_name),
+                module_id,
+                Some(ElementAuthored::Value(ValueStorage::StringType(
+                    value::StringType,
+                ))),
+            )
+            .get_id();
+        let error_name = self.str2id("error");
+        let error_id = self
+            .add_element(
+                ElementKey::Name(error_name),
+                module_id,
+                Some(ElementAuthored::Value(ValueStorage::Error(value::Error))),
+            )
+            .get_id();
         scope.elements = HashMap::from_iter([
             (mod_name, mod_element_id),
             (diagnose_name, diagnose_element_id),
-            (equal_name,equal_element_id),
-            (switch_name,switch_element_id),
+            (equal_name, equal_element_id),
+            (switch_name, switch_element_id),
+            (type_of_name, type_of_id),
+            (with_type_name, with_type_id),
+            (find_name, find_id),
+            (value_of_name, value_of_id),
+            (int_name, int_id),
+            (string_name, string_id),
+            (error_name, error_id),
         ]);
-        self.set_element_value(
+        self.set_element_expr(
             self.get_module(module_id).root_scope.unwrap(),
-            ValueStorage::Scope(value::Scope(scope.get_id())),
+            Expr::Value(ValueStorage::Scope(value::Scope(scope.get_id()))),
         );
         self.builtin_module = Some(module_id);
     }
@@ -302,9 +379,11 @@ impl Interpreter {
         let (authored, file_id) = if let Some(path) = &path {
             let file_id = self.find_or_add_file(path);
             let file = erase_mut(self).get_file(file_id);
-            let source = if let Some(scope) = file.tree.root_node().unwrap().scope_content(){
+            let source = if let Some(scope) = file.tree.root_node().unwrap().scope_content() {
                 Some(scope.unwrap())
-            }else{None};
+            } else {
+                None
+            };
             (
                 Some(ScopeAuthored {
                     source,
@@ -441,16 +520,17 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                                 depend.dependant,
                                 depend.dependency,
                                 depend.source,
+                                depend.complete,
                                 false,
                             );
                         }
-                        Signal::Resolve(local_element_id) => {
+                        Signal::Resolve(resolve) => {
                             log::error!(
                                 "thread {:?}: receive resolve on {}",
                                 self.thread,
-                                value::Element(local_element_id).with_ctx(self)
+                                value::Element(resolve.element).with_ctx(self)
                             );
-                            self.resolve_element(local_element_id);
+                            self.resolve_element(resolve.element, resolve.complete);
                         }
                     }
                     self.decrease_workload();
@@ -466,16 +546,17 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                                 depend.dependant,
                                 depend.dependency,
                                 depend.source,
+                                depend.complete,
                                 false,
                             );
                         }
-                        Signal::Resolve(local_element_id) => {
+                        Signal::Resolve(resolve) => {
                             log::error!(
                                 "thread {:?}: receive resolve on {}",
                                 self.thread,
-                                value::Element(local_element_id).with_ctx(self)
+                                value::Element(resolve.element).with_ctx(self)
                             );
-                            self.resolve_element(local_element_id);
+                            self.resolve_element(resolve.element, resolve.complete);
                         }
                     }
                     self.decrease_workload();
@@ -592,7 +673,7 @@ pub trait InterpreterLike: Sized {
             }
         } {
             Some(raw)
-        } else if include_super{
+        } else if include_super {
             let builtin_module = self.get_builtin_module();
             let scope = self.get::<Scope>(
                 self.get_element_value(self.get_module(builtin_module).root_scope.unwrap())
@@ -606,7 +687,7 @@ pub trait InterpreterLike: Sized {
             } else {
                 None
             }
-        }else{
+        } else {
             None
         }
     }
@@ -846,7 +927,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
             }
             .into_iter()
             .flatten();
-            for effect in effects{
+            for effect in effects {
                 let Some(value) =
                     (unsafe { self.grammar_error(Location::Scope(scope_id), effect) })
                 else {
@@ -891,6 +972,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     ElementAuthored::Value(value) => {
                         let element_local = element.local.get_mut();
                         element_local.value = Some(value);
+                        element_local.complete = true;
                         element.value = OnceLock::from(value);
                         break 'unresolve;
                     }
@@ -904,6 +986,28 @@ pub trait InterpreterLikeMut: InterpreterLike {
             module.unresolved_count += 1;
         }
         element
+    }
+    fn add_function(
+        &mut self,
+        module_id: ModuleId,
+        scope: Id<Scope>,
+        param: Id<Element>,
+    ) -> &mut Function {
+        let function = unsafe {
+            erase_mut(self).add(
+                Function::new(scope, param, ModuleId::default(), Id::DUMMY),
+                module_id,
+            )
+        };
+        let function_body_element = self.add_element(
+            ElementKey::Temp,
+            module_id,
+            Some(ElementAuthored::Expr(Expr::FunctionBody(FunctionBody {
+                function: function.get_id(),
+            }))),
+        );
+        function.body = function_body_element.get_id();
+        function
     }
     /// # Safety
     /// - `element_id` is local.
@@ -952,41 +1056,16 @@ pub trait InterpreterLikeMut: InterpreterLike {
         let root_scope_element = self.get_module(module_id).root_scope.unwrap();
         if let Some(authored) = module_local.authored {
             let root_scope_id = unsafe { self.add_scope(None, Some(authored), module_id) }.get_id();
-            self.set_element_value(
+            self.set_element_expr(
                 root_scope_element,
-                ValueStorage::Scope(value::Scope(root_scope_id)),
+                Expr::Value(ValueStorage::Scope(value::Scope(root_scope_id))),
             );
-            unsafe { self.run_module_scope(root_scope_id, module_id) };
             module_local.unresolved_count -= 1;
             for dependant in mem::take(&mut module_local.dependants) {
-                self.resolve_element(dependant);
+                self.resolve_element(dependant, false);
             }
             self.decrease_workload();
         }
-    }
-    unsafe fn run_module_scope(&mut self, scope_id: Id<Scope>, module_id: ModuleId) {
-        let scope = erase(self).get(scope_id);
-        if scope.module != module_id {
-            return;
-        }
-        for element_id in scope.visible_elements() {
-            unsafe { self.run_module_element(element_id, module_id) };
-        }
-    }
-    unsafe fn run_module_element(&mut self, element_id: Id<Element>, module_id: ModuleId) {
-        unsafe {
-            // SAFETY: local: `module` -> `element`
-            if let Some(value) = self.run_element(element_id) {
-                match value {
-                    ValueStorage::Scope(scope) => self.run_module_scope(scope.0, module_id),
-                    ValueStorage::Function(function) => {
-                        let function = self.get(function.0);
-                        self.run_module_element(function.body, module_id);
-                    }
-                    _ => (),
-                };
-            }
-        };
     }
     /// # Safety
     /// - `element_id` is local.
@@ -999,7 +1078,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
             element_local.is_running = true;
         }
 
-        if element_local.is_resolved() || element_local.dependency_count > 0 {
+        if !(element_local.dependency_count == 0 && !element_local.is_resolved(false)
+            || element_local.complete_dependency_count == 0 && !element_local.is_resolved(true))
+        {
             element_local.is_running = false;
             return None;
         }
@@ -1011,19 +1092,26 @@ pub trait InterpreterLikeMut: InterpreterLike {
 
         let mut value = None;
         let mut solved = true;
+        let mut complete_solved = true;
         let resolved_value = self.run_value(element_id);
         let element_local = unsafe { self.get_local(element_id) };
         if element_local.dependency_count > 0 {
             solved = false;
         }
-        if let Some(resolved_value) = resolved_value{
+        if element_local.complete_dependency_count > 0 {
+            complete_solved = false;
+        }
+        if let Some(resolved_value) = resolved_value {
             value = Some(resolved_value);
         }
-        if solved{
+        if solved {
             self.set_element_value(
                 element_id,
                 value.unwrap_or(ValueStorage::Error(value::Error)),
             );
+        }
+        if complete_solved {
+            self.set_element_complete(element_id);
         }
         let element_local = unsafe { self.get_local_mut(element_id) };
         element_local.is_running = false;
@@ -1034,11 +1122,18 @@ pub trait InterpreterLikeMut: InterpreterLike {
     fn run_value(&mut self, element_id: Id<Element>) -> Option<ValueStorage> {
         run::Context::run_expr(self, element_id)
     }
+    fn set_element_expr(&mut self, element_id: Id<Element>, expr: Expr) -> Option<ValueStorage> {
+        let element_local = unsafe { self.get_local_mut(element_id) };
+        assert!(element_local.expr.is_none());
+        element_local.expr = Some(expr);
+        unsafe { self.run_element(element_id) }
+    }
     /// # Panic
     /// - when concurrent, element is not in local thread.
     /// - element's value has been resolved.
     fn set_element_value(&mut self, element_id: Id<Element>, value: ValueStorage) {
         let element_local = unsafe { self.get_local_mut(element_id) };
+        assert!(element_local.value.is_none());
         element_local.value = Some(value);
         if self.is_concurrent() {
             let element = self.get(element_id);
@@ -1048,13 +1143,19 @@ pub trait InterpreterLikeMut: InterpreterLike {
             element.value = OnceLock::from(value);
         }
 
-        let module = unsafe { self.get_module_local_mut(self.get_module_of(element_id)) };
-        module.unresolved_count -= 1;
-
         let element_local = unsafe { self.get_local_mut(element_id) };
         for dependant in mem::take(&mut element_local.dependants) {
-            self.resolve_element(dependant.element_id);
+            self.resolve_element(dependant.element_id, false);
         }
+    }
+    fn set_element_complete(&mut self, element_id: Id<Element>) {
+        let element_local = unsafe { self.get_local_mut(element_id) };
+        element_local.complete = true;
+        for dependant in mem::take(&mut element_local.complete_dependants) {
+            self.resolve_element(dependant.element_id, true);
+        }
+        let module = unsafe { self.get_module_local_mut(self.get_module_of(element_id)) };
+        module.unresolved_count -= 1;
     }
     /// # Panic
     /// - when concurrent, dependant is not in local thread.
@@ -1064,35 +1165,51 @@ pub trait InterpreterLikeMut: InterpreterLike {
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
         source: Option<UntypedNode<'static>>,
+        complete: bool,
         local: bool,
     ) -> Option<ValueStorage> {
         if self.is_local(dependency_id) {
             unsafe { self.run_element(dependency_id) };
             let dependency = erase_mut(unsafe { self.get_local_mut(dependency_id) });
             if local {
-                if let Some(value) = dependency.value {
+                if let Some(value) = dependency.get_resolved(complete) {
                     return Some(value);
                 } else {
                     let dependant_local = unsafe { self.get_local_mut(dependant_id) };
-                    dependant_local.dependency_count += 1;
+                    if !complete {
+                        dependant_local.dependency_count += 1;
+                    } else {
+                        dependant_local.complete_dependency_count += 1;
+                    }
                 }
             } else {
-                if dependency.is_resolved() {
-                    self.resolve_element(dependant_id);
+                if dependency.is_resolved(complete) {
+                    self.resolve_element(dependant_id, complete);
                     return None;
                 }
             }
-            dependency.dependants.push(Dependant {
+
+            if !complete {
+                &mut dependency.dependants
+            } else {
+                &mut dependency.complete_dependants
+            }
+            .push(Dependant {
                 element_id: dependant_id,
                 source,
             });
         } else {
             debug_assert!(local);
-            if let Some(value) = self.get(dependency_id).value.get().copied() {
+            let dependency = self.get(dependency_id);
+            if let Some(value) = dependency.get_resolved(complete) {
                 return Some(value);
             }
             let dependant_local = unsafe { self.get_local_mut(dependant_id) };
-            dependant_local.dependency_count += 1;
+            if !complete {
+                dependant_local.dependency_count += 1;
+            } else {
+                dependant_local.complete_dependency_count += 1;
+            }
             if let Some(thread) = self.get_thread_remote_of(dependency_id) {
                 log::error!(
                     "thread {:?}: send depend on {}",
@@ -1103,6 +1220,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     dependant: dependant_id,
                     dependency: dependency_id,
                     source,
+                    complete,
                 }));
                 self.increase_workload();
             }
@@ -1114,8 +1232,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
         source: Option<UntypedNode<'static>>,
+        complete: bool,
     ) -> Option<ValueStorage> {
-        self.depend_element_raw(dependant_id, dependency_id, source, true)
+        self.depend_element_raw(dependant_id, dependency_id, source, complete, true)
     }
     /// # Panic
     /// - when concurrent, any element is not in local thread.
@@ -1123,17 +1242,22 @@ pub trait InterpreterLikeMut: InterpreterLike {
         &mut self,
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
+        complete: bool,
     ) -> Option<ValueStorage> {
         let dependency = self.get(dependency_id);
         let source = dependency.source.as_ref().map(|x| x.value_source.upcast());
-        self.depend_element(dependant_id, dependency_id, source)
+        self.depend_element(dependant_id, dependency_id, source, complete)
     }
     /// # Panic
     /// element is not in threads
-    fn resolve_element(&mut self, id: Id<Element>) {
+    fn resolve_element(&mut self, id: Id<Element>, complete: bool) {
         if self.is_local(id) {
             let dependant = unsafe { self.get_local_mut(id) };
-            dependant.dependency_count -= 1;
+            if !complete {
+                dependant.dependency_count -= 1;
+            } else {
+                dependant.complete_dependency_count -= 1;
+            }
             unsafe { self.run_element(id) };
         } else {
             let thread = self.get_thread_remote_of(id).unwrap();
@@ -1142,7 +1266,10 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 self.thread(),
                 value::Element(id).with_ctx(self)
             );
-            thread.channel.push(Signal::Resolve(id));
+            thread.channel.push(Signal::Resolve(Resolve {
+                element: id,
+                complete,
+            }));
             self.increase_workload();
         }
     }

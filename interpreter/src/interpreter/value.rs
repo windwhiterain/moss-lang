@@ -5,7 +5,8 @@ use crate::{
         Id,
         element::{self, ElementKey},
         function::{self},
-        scope::{self}, set,
+        scope::{self},
+        set,
     },
     utils::contexted::{Contexted, WithContext},
 };
@@ -17,8 +18,7 @@ use std::{
 use crate::{interpreter::InterpreterLike, utils::concurrent_string_interner::StringId};
 
 pub trait ValueLike {
-    fn is_effective_type()->bool{false}
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage;
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +27,10 @@ pub enum BuiltinFunction {
     Diagnose,
     Equal,
     Switch,
+    TypeOf,
+    WithType,
+    Find,
+    ValueOf,
 }
 impl fmt::Display for BuiltinFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -35,14 +39,18 @@ impl fmt::Display for BuiltinFunction {
             BuiltinFunction::Mod => write!(f, "mod"),
             BuiltinFunction::Diagnose => write!(f, "diagnose"),
             BuiltinFunction::Equal => write!(f, "equal"),
-            BuiltinFunction::Switch => write!(f,"switch"),
+            BuiltinFunction::Switch => write!(f, "switch"),
+            BuiltinFunction::TypeOf => write!(f, "type_of"),
+            BuiltinFunction::WithType => write!(f, "with_type"),
+            BuiltinFunction::Find => write!(f, "find"),
+            BuiltinFunction::ValueOf => write!(f, "value_of"),
         }
     }
 }
 
-impl ValueLike for BuiltinFunction{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::FunctionType(FunctionType)
+impl ValueLike for BuiltinFunction {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::FunctionType(FunctionType))
     }
 }
 
@@ -54,9 +62,9 @@ impl Display for Int {
         write!(f, "{}", self.0)
     }
 }
-impl ValueLike for Int{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::IntType(IntType)
+impl ValueLike for Int {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::IntType(IntType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,9 +74,9 @@ impl Display for IntType {
         write!(f, "Int")
     }
 }
-impl ValueLike for IntType{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::TypeType(TypeType)
+impl ValueLike for IntType {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::TypeType(TypeType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,9 +86,9 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, String, Ctx> {
         write!(f, "\"{}\"", &*self.ctx.id2str(self.value.0))
     }
 }
-impl ValueLike for String{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::StringType(StringType)
+impl ValueLike for String {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::StringType(StringType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,9 +98,9 @@ impl Display for StringType {
         write!(f, "String")
     }
 }
-impl ValueLike for StringType{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::TypeType(TypeType)
+impl ValueLike for StringType {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::TypeType(TypeType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,12 +108,12 @@ pub struct Set(pub Id<set::Set>);
 impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Set, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let set = self.ctx.get(self.value.0);
-        write!(f, "{{}}^{}",set.elements.len())
+        write!(f, "{{}}^{}", set.elements.len())
     }
 }
-impl ValueLike for Set{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::SetType(SetType)
+impl ValueLike for Set {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::SetType(SetType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,9 +123,9 @@ impl Display for SetType {
         write!(f, "Set")
     }
 }
-impl ValueLike for SetType{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::TypeType(TypeType)
+impl ValueLike for SetType {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::TypeType(TypeType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,20 +135,20 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Scope, Ctx> {
         let scope = self.ctx.get(self.value.0);
         write!(f, "{{")?;
         let mut elements = scope.elements.keys();
-        if let Some(first) = elements.next(){
+        if let Some(first) = elements.next() {
             write!(f, "{};", self.ctx.id2str(*first).deref(),)?;
             for key in elements {
-            write!(f, " {};", self.ctx.id2str(*key).deref(),)?;
-        }
-        }else{
-            write!(f,";")?
+                write!(f, " {};", self.ctx.id2str(*key).deref(),)?;
+            }
+        } else {
+            write!(f, ";")?
         }
         write!(f, "}}")
     }
 }
-impl ValueLike for Scope{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::ScopeType(ScopeType)
+impl ValueLike for Scope {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::ScopeType(ScopeType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,9 +158,9 @@ impl Display for ScopeType {
         write!(f, "Scope")
     }
 }
-impl ValueLike for ScopeType{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::TypeType(TypeType)
+impl ValueLike for ScopeType {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::TypeType(TypeType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,9 +176,9 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Element, Ctx> 
         write!(f, "@{}", name)
     }
 }
-impl ValueLike for Element{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::ElementType(ElementType)
+impl ValueLike for Element {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::ElementType(ElementType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,9 +188,9 @@ impl Display for ElementType {
         write!(f, "Element")
     }
 }
-impl ValueLike for ElementType{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::TypeType(TypeType)
+impl ValueLike for ElementType {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::TypeType(TypeType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,9 +200,9 @@ impl Display for Function {
         write!(f, "->{{}}")
     }
 }
-impl ValueLike for Function{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::FunctionType(FunctionType)
+impl ValueLike for Function {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::FunctionType(FunctionType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,9 +212,9 @@ impl Display for FunctionBody {
         write!(f, "->{{..}}")
     }
 }
-impl ValueLike for FunctionBody{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::Trivial(Trivial)
+impl ValueLike for FunctionBody {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::Trivial(Trivial))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,9 +224,9 @@ impl Display for FunctionType {
         write!(f, "Function")
     }
 }
-impl ValueLike for FunctionType{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::TypeType(TypeType)
+impl ValueLike for FunctionType {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::TypeType(TypeType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,9 +236,9 @@ impl Display for TypeType {
         write!(f, "Type")
     }
 }
-impl ValueLike for TypeType{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::TypeType(TypeType)
+impl ValueLike for TypeType {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::TypeType(TypeType))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,9 +248,9 @@ impl Display for Trivial {
         write!(f, "()")
     }
 }
-impl ValueLike for Trivial{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::Trivial(Trivial)
+impl ValueLike for Trivial {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::Trivial(Trivial))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,9 +260,9 @@ impl Display for Error {
         write!(f, "?")
     }
 }
-impl ValueLike for Error{
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::Error(Error)
+impl ValueLike for Error {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::Error(Error))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,10 +277,16 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Param, Ctx> {
         write!(f, "{}:", &*param_name)?;
         if let Some(r#type) = param.r#type {
             write!(f, " {}", r#type.with_ctx(self.ctx))?;
-        }else{
+        } else {
             write!(f, " ?")?;
         }
         Ok(())
+    }
+}
+impl ValueLike for Param {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        let param = ctx.get(self.0);
+        Some(param.r#type.unwrap_or(ValueStorage::Error(Error)))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,13 +296,9 @@ impl Display for Diagnostic {
         write!(f, "Diagnostic")
     }
 }
-impl ValueLike for Diagnostic{
-    fn is_effective_type()->bool {
-        true
-    }
-    
-    fn get_type(self,ctx:&impl InterpreterLike)->ValueStorage {
-        ValueStorage::TypeType(TypeType)
+impl ValueLike for Diagnostic {
+    fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::TypeType(TypeType))
     }
 }
 
@@ -334,6 +344,30 @@ impl ValueStorage {
             }
         }
     }
+
+    pub fn get_type(self, ctx: &(impl InterpreterLike + ?Sized)) -> Option<ValueStorage> {
+        match self {
+            ValueStorage::Int(value) => value.get_type(ctx),
+            ValueStorage::IntType(value) => value.get_type(ctx),
+            ValueStorage::String(value) => value.get_type(ctx),
+            ValueStorage::StringType(value) => value.get_type(ctx),
+            ValueStorage::Set(value) => value.get_type(ctx),
+            ValueStorage::SetType(value) => value.get_type(ctx),
+            ValueStorage::Scope(value) => value.get_type(ctx),
+            ValueStorage::ScopeType(value) => value.get_type(ctx),
+            ValueStorage::Element(value) => value.get_type(ctx),
+            ValueStorage::ElementType(value) => value.get_type(ctx),
+            ValueStorage::Function(value) => value.get_type(ctx),
+            ValueStorage::FunctionBody(value) => value.get_type(ctx),
+            ValueStorage::FunctionType(value) => value.get_type(ctx),
+            ValueStorage::TypeType(value) => value.get_type(ctx),
+            ValueStorage::BuiltinFunction(value) => value.get_type(ctx),
+            ValueStorage::Error(value) => value.get_type(ctx),
+            ValueStorage::Trivial(value) => value.get_type(ctx),
+            ValueStorage::Param(value) => value.get_type(ctx),
+            ValueStorage::Diagnostic(value) => value.get_type(ctx),
+        }
+    }
 }
 
 #[macro_export]
@@ -367,7 +401,7 @@ impl<'a, Ctx: InterpreterLike + ?Sized> Display for Contexted<'a, ValueStorage, 
             ValueStorage::Error(value) => write!(f, "{}", value),
             ValueStorage::Trivial(value) => write!(f, "{}", value),
             ValueStorage::Param(value) => write!(f, "{}", value.with_ctx(self.ctx)),
-            ValueStorage::Diagnostic(value)=>write!(f,"{}",value),
+            ValueStorage::Diagnostic(value) => write!(f, "{}", value),
         }
     }
 }

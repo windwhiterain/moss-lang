@@ -173,11 +173,12 @@ impl LanguageServer {
                             self.lsp_diagnostics.push(self.ls.make_diagnostic(
                                 key_node.upcast(),
                                 format!(
-                                        "{}",
+                                        "{}{}",
                                         element_local
                                             .value
                                             .unwrap_or(ValueStorage::Error(value::Error))
-                                            .with_ctx(self.ip)
+                                            .with_ctx(self.ip),
+                                        if element_local.complete{"(complete)"} else {""}
                                     ),
                                 DiagnosticSeverity::HINT,
                             ));

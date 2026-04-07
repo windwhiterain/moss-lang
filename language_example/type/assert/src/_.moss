@@ -1,0 +1,13 @@
+b = 1;
+diagnose {condition = b; source = @b; text = "hihihi";};
+assert_key = param -> {
+    element = find {scope = param; key = "a";};
+    ret = switch {index = equal [element, error,]; set = [
+        element,
+        {
+            diagnose {condition = element; source = @param; text = "must has a";};
+        },
+    ];};
+};
+
+a = (assert_key {a = 2;}).ret;

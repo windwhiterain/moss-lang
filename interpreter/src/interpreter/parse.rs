@@ -84,9 +84,14 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
     fn parse_scope(&mut self, scope: moss::Scope<'static>) -> Option<Expr> {
         Some(Expr::Value(ValueStorage::Scope(value::Scope(unsafe {
             // SAFETY: element -> scope
-            let source = if let Some(scope) = scope.scope_content(){
-                Some(self.ip.grammar_error(Location::Element(self.element_id), scope)?)
-            }else{None};
+            let source = if let Some(scope) = scope.scope_content() {
+                Some(
+                    self.ip
+                        .grammar_error(Location::Element(self.element_id), scope)?,
+                )
+            } else {
+                None
+            };
             self.ip
                 .add_scope(
                     Some(self.scope.get_id()),
@@ -225,19 +230,14 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
         };
         let param_name = self.ip.get_source_str_id(&param_name, self.file_id);
 
-        let function = unsafe { erase_mut(self).ip.get_module_local_mut(self.scope.module) }
-            .pools
-            .functions
-            .insert(Function::new(
-                Id::DUMMY,
-                Id::DUMMY,
-                self.scope.module,
-                Id::DUMMY,
-            ));
-
-        let source = if let Some(scope) = scope.scope_content(){
-                Some(unsafe { self.ip.grammar_error(Location::Element(self.element_id), scope) }?)
-            }else{None};
+        let source = if let Some(scope) = scope.scope_content() {
+            Some(unsafe {
+                self.ip
+                    .grammar_error(Location::Element(self.element_id), scope)
+            }?)
+        } else {
+            None
+        };
 
         let scope = unsafe {
             // SAFETY: element -> scope
@@ -251,12 +251,10 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             )
         };
 
-        function.scope = scope.get_id();
-
         let param = unsafe {
             erase_mut(self).ip.add(
                 Param {
-                    function: function.get_id(),
+                    function: Id::DUMMY,
                     element: Id::DUMMY,
                     r#type: None,
                 },
@@ -268,29 +266,21 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             .add_element(
                 ElementKey::Name(param_name),
                 scope.module,
-                Some(ElementAuthored::Value(ValueStorage::Param(
-                    value::Param(param.get_id()),
-                ))),
+                Some(ElementAuthored::Value(ValueStorage::Param(value::Param(
+                    param.get_id(),
+                )))),
             )
             .get_id();
         scope.elements.insert(param_name, param_element_id);
 
         param.element = param_element_id;
 
-        let body_element_id = self
-            .ip
-            .add_element(
-                ElementKey::Temp,
-                scope.module,
-                Some(ElementAuthored::Expr(Expr::FunctionBody(
-                    expr::FunctionBody {
-                        function: function.get_id(),
-                    },
-                ))),
-            )
-            .get_id();
-        function.body = body_element_id;
-        function.param = param_element_id;
+        let function =
+            erase_mut(self)
+                .ip
+                .add_function(self.scope.module, scope.get_id(), param_element_id);
+
+        param.function = function.get_id();
         Some(Expr::Value(ValueStorage::Function(value::Function(
             function.get_id(),
         ))))
@@ -348,7 +338,9 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                 parse_value(self.ip, bracket.value(), self.element_id, self.scope)
             }
             moss::ValueChild::Set(set) => self.parse_set(set),
-            moss::ValueChild::Trivial(_) => Some(Expr::Value(ValueStorage::Trivial(value::Trivial))),
+            moss::ValueChild::Trivial(_) => {
+                Some(Expr::Value(ValueStorage::Trivial(value::Trivial)))
+            }
             _ => Some(Expr::Value(ValueStorage::Error(value::Error))),
         }
     }
