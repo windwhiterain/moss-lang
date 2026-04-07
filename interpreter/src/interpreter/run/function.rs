@@ -36,7 +36,7 @@ impl<'a, IP: InterpreterLikeMut> CallContext<'a, IP> {
         let function = erase(ctx.ip).get(function.0);
         let body = ctx
             .ip
-            .depend_child_element(ctx.element.get_id(), function.body, false)?
+            .depend_child_element(ctx.element.get_id(), function.body)?
             .extract_as_function_body()
             .0;
         let body = erase(ctx).ip.get(body);

@@ -65,7 +65,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
     fn run_ref(&mut self) -> Option<ValueStorage> {
         let r#ref = self.expr.extract_as_ref();
         self.ip
-            .depend_element(self.element.get_id(), r#ref.element, self.source, false)
+            .depend_element(self.element.get_id(), r#ref.element, self.source)
     }
     fn run_find(&mut self) -> Option<ValueStorage> {
         let find = self.expr.extract_as_find();
@@ -74,7 +74,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let find_element_id = if let Some(target) = find.target {
             let target = self
                 .ip
-                .depend_child_element(self.element.get_id(), target, false)?;
+                .depend_child_element(self.element.get_id(), target)?;
             match target {
                 ValueStorage::Scope(value::Scope(scope_id)) => {
                     self.ip.find_element(scope_id, find.name, false)
@@ -98,7 +98,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
                     element: find_element_id,
                 });
                 self.ip
-                    .depend_element(self.element.get_id(), find_element_id, self.source, false)
+                    .depend_element(self.element.get_id(), find_element_id, self.source)
             } else {
                 Some(ValueStorage::Element(value::Element(find_element_id)))
             }
@@ -116,12 +116,12 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let call = self.expr.extract_as_call();
         let function = self
             .ip
-            .depend_child_element(self.element.get_id(), call.function, true)?;
+            .depend_child_element(self.element.get_id(), call.function)?;
         match function {
             ValueStorage::BuiltinFunction(builtin) => {
-                let param =
-                    self.ip
-                        .depend_child_element(self.element.get_id(), call.param, false)?;
+                let param = self
+                    .ip
+                    .depend_child_element(self.element.get_id(), call.param)?;
                 buitin_function::Context::run(self, builtin, param)
             }
             ValueStorage::Function(function) => {
@@ -134,11 +134,7 @@ impl<'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let scope = erase(self.ip).get(scope);
         for effect in scope.effects.iter().copied() {
             self.ip
-                .depend_element(self.element.get_id(), effect, None, false)?;
-        }
-        for element in scope.elements.values().copied() {
-            self.ip
-                .depend_element(self.element.get_id(), element, None, true);
+                .depend_element(self.element.get_id(), effect, None)?;
         }
         Some(())
     }

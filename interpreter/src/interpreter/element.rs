@@ -24,25 +24,16 @@ pub struct ElementLocal {
     pub value: Option<ValueStorage>,
     pub dependency_count: i64,
     pub dependants: SmallVec<[Dependant; 4]>,
-    pub complete_dependency_count: i64,
-    pub complete_dependants: SmallVec<[Dependant; 4]>,
     pub diagnoistics: Vec<Diagnostic>,
     pub is_running: bool,
-    pub complete: bool,
 }
 
 impl ElementLocal {
-    pub fn is_resolved(&self, complete: bool) -> bool {
-        self.value.is_some() && !(complete && !self.complete)
+    pub fn is_resolved(&self) -> bool {
+        self.value.is_some()
     }
-    pub fn get_resolved(&self, complete: bool) -> Option<ValueStorage> {
-        if let Some(value) = self.value
-            && !(complete && !self.complete)
-        {
-            Some(value)
-        } else {
-            None
-        }
+    pub fn get_resolved(&self) -> Option<ValueStorage> {
+        self.value
     }
 }
 
@@ -53,7 +44,6 @@ pub struct Element {
     pub module: ModuleId,
     pub value: OnceLock<ValueStorage>,
     pub local: UnsafeCell<ElementLocal>,
-    pub complete: OnceLock<()>,
 }
 
 impl Managed for Element {
@@ -90,23 +80,16 @@ impl Element {
                 value: None,
                 dependency_count: 0,
                 dependants: Default::default(),
-                complete_dependency_count: 0,
-                complete_dependants: Default::default(),
                 diagnoistics: Default::default(),
                 is_running: false,
-                complete: false,
             }),
-            complete: Default::default(),
         }
     }
-    pub fn get_resolved(&self, complete: bool) -> Option<ValueStorage> {
-        if let Some(value) = self.value.get().copied()
-            && !(complete && !self.complete.get().is_some())
-        {
-            Some(value)
-        } else {
-            None
-        }
+    pub fn is_resolved(&self) -> bool {
+        self.value.get().is_some()
+    }
+    pub fn get_resolved(&self) -> Option<ValueStorage> {
+        self.value.get().copied()
     }
 }
 

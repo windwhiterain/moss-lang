@@ -75,12 +75,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let module = self.ip.get_module(module_id);
         let root_scope = self
             .ip
-            .depend_element(
-                self.element_id,
-                module.root_scope.unwrap(),
-                self.source,
-                false,
-            )?
+            .depend_element(self.element_id, module.root_scope.unwrap(), self.source)?
             .as_scope()
             .ok()?
             .0;
@@ -96,19 +91,16 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.element_id,
             self.ip.find_element(scope, condition_key, false)?,
             self.source,
-            false,
         )?;
         let source_element = self.ip.depend_element(
             self.element_id,
             self.ip.find_element(scope, source_key, false)?,
             self.source,
-            false,
         )?;
         let text = self.ip.depend_element(
             self.element_id,
             self.ip.find_element(scope, text_key, false)?,
             self.source,
-            false,
         )?;
         if let Some(function) = merge_params!(self.ip, condition, source_element, text) {
             return Some(ValueStorage::Param(value::Param(unsafe {
@@ -142,9 +134,9 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let mut param = None;
         let mut value = None;
         for element in set.elements.iter().copied() {
-            let other_value =
-                self.ip
-                    .depend_element(self.element_id, element, self.source, false)?;
+            let other_value = self
+                .ip
+                .depend_element(self.element_id, element, self.source)?;
             if let ValueStorage::Param(_) = other_value {
                 other_value.merge_param(self.ip, &mut param);
             } else {
@@ -187,13 +179,11 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.element_id,
             self.ip.find_element(scope, index_key, false)?,
             self.source,
-            false,
         )?;
         let set = self.ip.depend_element(
             self.element_id,
             self.ip.find_element(scope, set_key, false)?,
             self.source,
-            false,
         )?;
         if let Some(function) = merge_params!(self.ip, set) {
             return Some(ValueStorage::Param(value::Param(unsafe {
@@ -214,7 +204,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
         if let Some(function) = merge_params!(self.ip, index) {
             for element in erase(&set.elements).iter().copied() {
                 self.ip
-                    .depend_element(self.element_id, element, self.source, false)?;
+                    .depend_element(self.element_id, element, self.source)?;
             }
             return Some(ValueStorage::Param(value::Param(unsafe {
                 self.ip
@@ -234,7 +224,7 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             *self.expr = Expr::Ref(expr::Ref { element });
             Some(
                 self.ip
-                    .depend_element(self.element_id, element, self.source, false)?,
+                    .depend_element(self.element_id, element, self.source)?,
             )
         } else {
             Some(ValueStorage::Error(value::Error))
@@ -266,7 +256,6 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.element_id,
             self.ip.find_element(scope, value_key, false)?,
             self.source,
-            false,
         )?;
         let ValueStorage::Param(value_param) = value else {
             return Some(value);
@@ -277,7 +266,6 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.element_id,
             self.ip.find_element(scope, type_key, false)?,
             self.source,
-            false,
         )?;
         Some(ValueStorage::Param(value::Param(unsafe {
             self.ip
@@ -299,14 +287,12 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
             self.element_id,
             self.ip.find_element(params, scope_key, false)?,
             self.source,
-            false,
         )?;
         let key_key = self.ip.str2id("key");
         let key = self.ip.depend_element(
             self.element_id,
             self.ip.find_element(params, key_key, false)?,
             self.source,
-            false,
         )?;
         if let Some(function) = merge_params!(self.ip, scope, key) {
             return Some(ValueStorage::Param(value::Param(unsafe {
@@ -347,6 +333,6 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
         }
         let element = self.param.as_element().ok()?.0;
         self.ip
-            .depend_element(self.element_id, element, self.source, false)
+            .depend_element(self.element_id, element, self.source)
     }
 }

@@ -48,12 +48,10 @@ pub struct Depend {
     pub dependant: Id<Element>,
     pub dependency: Id<Element>,
     pub source: Option<UntypedNode<'static>>,
-    pub complete: bool,
 }
 
 pub struct Resolve {
     pub element: Id<Element>,
-    pub complete: bool,
 }
 
 pub enum Signal {

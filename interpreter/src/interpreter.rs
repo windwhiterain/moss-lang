@@ -520,7 +520,6 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                                 depend.dependant,
                                 depend.dependency,
                                 depend.source,
-                                depend.complete,
                                 false,
                             );
                         }
@@ -530,7 +529,7 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                                 self.thread,
                                 value::Element(resolve.element).with_ctx(self)
                             );
-                            self.resolve_element(resolve.element, resolve.complete);
+                            self.resolve_element(resolve.element);
                         }
                     }
                     self.decrease_workload();
@@ -546,7 +545,6 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                                 depend.dependant,
                                 depend.dependency,
                                 depend.source,
-                                depend.complete,
                                 false,
                             );
                         }
@@ -556,7 +554,7 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
                                 self.thread,
                                 value::Element(resolve.element).with_ctx(self)
                             );
-                            self.resolve_element(resolve.element, resolve.complete);
+                            self.resolve_element(resolve.element);
                         }
                     }
                     self.decrease_workload();
@@ -972,7 +970,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     ElementAuthored::Value(value) => {
                         let element_local = element.local.get_mut();
                         element_local.value = Some(value);
-                        element_local.complete = true;
                         element.value = OnceLock::from(value);
                         break 'unresolve;
                     }
@@ -1062,67 +1059,37 @@ pub trait InterpreterLikeMut: InterpreterLike {
             );
             module_local.unresolved_count -= 1;
             for dependant in mem::take(&mut module_local.dependants) {
-                self.resolve_element(dependant, false);
+                self.resolve_element(dependant);
             }
             self.decrease_workload();
         }
     }
     /// # Safety
     /// - `element_id` is local.
-    unsafe fn run_element(&mut self, element_id: Id<Element>) -> Option<ValueStorage> {
-        let element_local = unsafe { self.get_local_mut(element_id) };
-
+    unsafe fn run_element(&mut self, element_id: Id<Element>) {
+        let mut element_local = unsafe { self.get_local_mut(element_id) };
         if element_local.is_running {
-            return None;
+            return;
         } else {
             element_local.is_running = true;
         }
-
-        if !(element_local.dependency_count == 0 && !element_local.is_resolved(false)
-            || element_local.complete_dependency_count == 0 && !element_local.is_resolved(true))
-        {
-            element_local.is_running = false;
-            return None;
-        }
-
-        if element_local.expr.is_none() {
-            element_local.is_running = false;
-            return None;
-        };
-
-        let mut value = None;
-        let mut solved = true;
-        let mut complete_solved = true;
-        let resolved_value = self.run_value(element_id);
-        let element_local = unsafe { self.get_local(element_id) };
-        if element_local.dependency_count > 0 {
-            solved = false;
-        }
-        if element_local.complete_dependency_count > 0 {
-            complete_solved = false;
-        }
-        if let Some(resolved_value) = resolved_value {
-            value = Some(resolved_value);
-        }
-        if solved {
+        if element_local.dependency_count == 0 && !element_local.is_resolved() {
+            element_local.is_running = true;
+            let value = self.run_value(element_id);
+            element_local = unsafe { erase_mut(self).get_local_mut(element_id) };
             self.set_element_value(
                 element_id,
                 value.unwrap_or(ValueStorage::Error(value::Error)),
             );
+            element_local.is_running = false;
         }
-        if complete_solved {
-            self.set_element_complete(element_id);
-        }
-        let element_local = unsafe { self.get_local_mut(element_id) };
-        element_local.is_running = false;
-        value
     }
     /// # Panic
     /// - when concurrent, element is not in local thread.
     fn run_value(&mut self, element_id: Id<Element>) -> Option<ValueStorage> {
         run::Context::run_expr(self, element_id)
     }
-    fn set_element_expr(&mut self, element_id: Id<Element>, expr: Expr) -> Option<ValueStorage> {
+    fn set_element_expr(&mut self, element_id: Id<Element>, expr: Expr) {
         let element_local = unsafe { self.get_local_mut(element_id) };
         assert!(element_local.expr.is_none());
         element_local.expr = Some(expr);
@@ -1145,14 +1112,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
 
         let element_local = unsafe { self.get_local_mut(element_id) };
         for dependant in mem::take(&mut element_local.dependants) {
-            self.resolve_element(dependant.element_id, false);
-        }
-    }
-    fn set_element_complete(&mut self, element_id: Id<Element>) {
-        let element_local = unsafe { self.get_local_mut(element_id) };
-        element_local.complete = true;
-        for dependant in mem::take(&mut element_local.complete_dependants) {
-            self.resolve_element(dependant.element_id, true);
+            self.resolve_element(dependant.element_id);
         }
         let module = unsafe { self.get_module_local_mut(self.get_module_of(element_id)) };
         module.unresolved_count -= 1;
@@ -1165,51 +1125,37 @@ pub trait InterpreterLikeMut: InterpreterLike {
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
         source: Option<UntypedNode<'static>>,
-        complete: bool,
         local: bool,
     ) -> Option<ValueStorage> {
         if self.is_local(dependency_id) {
             unsafe { self.run_element(dependency_id) };
             let dependency = erase_mut(unsafe { self.get_local_mut(dependency_id) });
             if local {
-                if let Some(value) = dependency.get_resolved(complete) {
+                if let Some(value) = dependency.get_resolved() {
                     return Some(value);
                 } else {
                     let dependant_local = unsafe { self.get_local_mut(dependant_id) };
-                    if !complete {
-                        dependant_local.dependency_count += 1;
-                    } else {
-                        dependant_local.complete_dependency_count += 1;
-                    }
+                    dependant_local.dependency_count += 1;
                 }
             } else {
-                if dependency.is_resolved(complete) {
-                    self.resolve_element(dependant_id, complete);
+                if dependency.is_resolved() {
+                    self.resolve_element(dependant_id);
                     return None;
                 }
             }
 
-            if !complete {
-                &mut dependency.dependants
-            } else {
-                &mut dependency.complete_dependants
-            }
-            .push(Dependant {
+            dependency.dependants.push(Dependant {
                 element_id: dependant_id,
                 source,
             });
         } else {
             debug_assert!(local);
             let dependency = self.get(dependency_id);
-            if let Some(value) = dependency.get_resolved(complete) {
+            if let Some(value) = dependency.get_resolved() {
                 return Some(value);
             }
             let dependant_local = unsafe { self.get_local_mut(dependant_id) };
-            if !complete {
-                dependant_local.dependency_count += 1;
-            } else {
-                dependant_local.complete_dependency_count += 1;
-            }
+            dependant_local.dependency_count += 1;
             if let Some(thread) = self.get_thread_remote_of(dependency_id) {
                 log::error!(
                     "thread {:?}: send depend on {}",
@@ -1220,7 +1166,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     dependant: dependant_id,
                     dependency: dependency_id,
                     source,
-                    complete,
                 }));
                 self.increase_workload();
             }
@@ -1232,9 +1177,8 @@ pub trait InterpreterLikeMut: InterpreterLike {
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
         source: Option<UntypedNode<'static>>,
-        complete: bool,
     ) -> Option<ValueStorage> {
-        self.depend_element_raw(dependant_id, dependency_id, source, complete, true)
+        self.depend_element_raw(dependant_id, dependency_id, source, true)
     }
     /// # Panic
     /// - when concurrent, any element is not in local thread.
@@ -1242,22 +1186,17 @@ pub trait InterpreterLikeMut: InterpreterLike {
         &mut self,
         dependant_id: Id<Element>,
         dependency_id: Id<Element>,
-        complete: bool,
     ) -> Option<ValueStorage> {
         let dependency = self.get(dependency_id);
         let source = dependency.source.as_ref().map(|x| x.value_source.upcast());
-        self.depend_element(dependant_id, dependency_id, source, complete)
+        self.depend_element(dependant_id, dependency_id, source)
     }
     /// # Panic
     /// element is not in threads
-    fn resolve_element(&mut self, id: Id<Element>, complete: bool) {
+    fn resolve_element(&mut self, id: Id<Element>) {
         if self.is_local(id) {
             let dependant = unsafe { self.get_local_mut(id) };
-            if !complete {
-                dependant.dependency_count -= 1;
-            } else {
-                dependant.complete_dependency_count -= 1;
-            }
+            dependant.dependency_count -= 1;
             unsafe { self.run_element(id) };
         } else {
             let thread = self.get_thread_remote_of(id).unwrap();
@@ -1266,10 +1205,9 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 self.thread(),
                 value::Element(id).with_ctx(self)
             );
-            thread.channel.push(Signal::Resolve(Resolve {
-                element: id,
-                complete,
-            }));
+            thread
+                .channel
+                .push(Signal::Resolve(Resolve { element: id }));
             self.increase_workload();
         }
     }
