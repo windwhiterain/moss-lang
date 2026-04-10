@@ -5,8 +5,8 @@ use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner, diagnose::Diagnostic, expr::Expr, module::ModuleId, scope::Scope,
-        value::ValueStorage,
+        Id, Managed, Owner, diagnose::Diagnostic, expr::Expr, module::ModuleId, run::Runner,
+        scope::Scope, value::ValueStorage,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
@@ -26,6 +26,7 @@ pub struct ElementLocal {
     pub dependants: SmallVec<[Dependant; 4]>,
     pub diagnoistics: Vec<Diagnostic>,
     pub is_running: bool,
+    pub runner: Option<Runner>,
 }
 
 impl ElementLocal {
@@ -41,9 +42,9 @@ impl ElementLocal {
 pub struct Element {
     pub key: ElementKey,
     pub source: Option<ElementSource>,
-    pub module: ModuleId,
     pub value: OnceLock<ValueStorage>,
     pub local: UnsafeCell<ElementLocal>,
+    pub owner: Owner,
 }
 
 impl Managed for Element {
@@ -58,23 +59,22 @@ impl Managed for Element {
     fn get_local_mut(&mut self) -> &mut UnsafeCell<Self::Local> {
         &mut self.local
     }
-    type Onwer = Self;
 
-    fn get_owner(&self) -> super::Owner<Self::Onwer>
+    fn get_module<IP: super::InterpreterLike>(&self, ip: &IP) -> ModuleId
     where
         Self: Sized,
     {
-        Owner::Module(self.module)
+        self.owner.module(ip)
     }
 }
 
 impl Element {
-    pub fn new<'tree>(key: ElementKey, module: ModuleId) -> Self {
+    pub fn new<'tree>(key: ElementKey, owner: Owner) -> Self {
         Self {
             key,
             value: Default::default(),
             source: None,
-            module,
+            owner,
             local: UnsafeCell::new(ElementLocal {
                 expr: None,
                 value: None,
@@ -82,6 +82,7 @@ impl Element {
                 dependants: Default::default(),
                 diagnoistics: Default::default(),
                 is_running: false,
+                runner: None,
             }),
         }
     }

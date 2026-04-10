@@ -270,15 +270,11 @@ pub struct Param(pub Id<function::Param>);
 impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Param, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let param = self.ctx.get(self.value.0);
-        let function = self.ctx.get(param.function);
-        let param_name = self
-            .ctx
-            .id2str(*self.ctx.get(function.param).key.extract_as_name());
-        write!(f, "{}:", &*param_name)?;
+        write!(f, ": ")?;
         if let Some(r#type) = param.r#type {
-            write!(f, " {}", r#type.with_ctx(self.ctx))?;
+            write!(f, "{}", r#type.with_ctx(self.ctx))?;
         } else {
-            write!(f, " ?")?;
+            write!(f, "?")?;
         }
         Ok(())
     }
@@ -333,13 +329,7 @@ impl ValueStorage {
     ) {
         if let ValueStorage::Param(param) = self {
             let function = ctx.get(param.0).function;
-            if let Some(ret) = ret {
-                if *ret != function {
-                    if ctx.get(ctx.get(*ret).scope).depth < ctx.get(ctx.get(function).scope).depth {
-                        *ret = function;
-                    }
-                }
-            } else {
+            if ret.is_none() {
                 *ret = Some(function);
             }
         }

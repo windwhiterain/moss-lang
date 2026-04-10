@@ -1,12 +1,12 @@
 use crate::{
-    interpreter::{Id, Managed, element::Element, module::ModuleId},
+    interpreter::{Id, Managed, Owner, element::Element, module::ModuleId},
     utils::unsafe_cell::UnsafeCell,
 };
 
 #[derive(Debug)]
 pub struct Set {
     pub elements: Vec<Id<Element>>,
-    pub module: ModuleId,
+    pub owner: Owner,
 }
 
 impl Managed for Set {
@@ -22,12 +22,10 @@ impl Managed for Set {
         unimplemented!()
     }
 
-    type Onwer = Self;
-
-    fn get_owner(&self) -> super::Owner<Self::Onwer>
+    fn get_module<IP: super::InterpreterLike>(&self, ip: &IP) -> ModuleId
     where
         Self: Sized,
     {
-        super::Owner::Module(self.module)
+        self.owner.module(ip)
     }
 }

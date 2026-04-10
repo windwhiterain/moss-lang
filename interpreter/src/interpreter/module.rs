@@ -25,7 +25,6 @@ gen_pools! {
 pub struct ModuleLocal {
     pub pools: Pools,
     pub authored: Option<ScopeAuthored>,
-    pub dependants: Vec<Id<Element>>,
     pub unresolved_count: usize,
 }
 
@@ -56,7 +55,6 @@ impl Module {
             local: UnsafeCell::new(ModuleLocal {
                 pools: Default::default(),
                 authored,
-                dependants: Default::default(),
                 unresolved_count: if resolved { 0 } else { 1 },
             }),
             root_scope: Default::default(),

@@ -4,15 +4,16 @@ use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{
-        Id, InterpreterLikeMut, Location, Managed as _, SRC_FILE_EXTENSION, SRC_PATH,
+        Id, Location, Managed as _, SRC_FILE_EXTENSION, SRC_PATH,
         diagnose::Diagnostic,
         element::Element,
         expr::{self, Expr},
         function::Param,
         module::ModuleId,
+        run,
         value::{self, BuiltinFunction, ValueStorage},
     },
-    merge_params,
+    merge_params, try_tuple,
     utils::erase,
 };
 
@@ -25,9 +26,9 @@ pub struct Context<'a, IP> {
     expr: &'a mut Expr,
 }
 
-impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
+impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> Context<'a, IP> {
     pub fn run(
-        ctx: &'a mut super::Context<'b, IP>,
+        ctx: &'a mut super::RunExprContext<'b, IP>,
         builtin_function: BuiltinFunction,
         param: ValueStorage,
     ) -> Option<ValueStorage> {
@@ -87,20 +88,22 @@ impl<'a, 'b: 'a, IP: InterpreterLikeMut> Context<'a, IP> {
         let condition_key = self.ip.str2id("condition");
         let source_key = self.ip.str2id("source");
         let text_key = self.ip.str2id("text");
-        let condition = self.ip.depend_element(
-            self.element_id,
-            self.ip.find_element(scope, condition_key, false)?,
-            self.source,
-        )?;
-        let source_element = self.ip.depend_element(
-            self.element_id,
-            self.ip.find_element(scope, source_key, false)?,
-            self.source,
-        )?;
-        let text = self.ip.depend_element(
-            self.element_id,
-            self.ip.find_element(scope, text_key, false)?,
-            self.source,
+        let (condition, source_element, text) = try_tuple!(
+            self.ip.depend_element(
+                self.element_id,
+                self.ip.find_element(scope, condition_key, false)?,
+                self.source,
+            ),
+            self.ip.depend_element(
+                self.element_id,
+                self.ip.find_element(scope, source_key, false)?,
+                self.source,
+            ),
+            self.ip.depend_element(
+                self.element_id,
+                self.ip.find_element(scope, text_key, false)?,
+                self.source,
+            ),
         )?;
         if let Some(function) = merge_params!(self.ip, condition, source_element, text) {
             return Some(ValueStorage::Param(value::Param(unsafe {

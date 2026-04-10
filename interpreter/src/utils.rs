@@ -36,3 +36,12 @@ pub fn new_uninit_cell_slice<T>(capacity: usize) -> Box<[UnsafeCell<MaybeUninit<
 
     unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr, len)) }
 }
+
+#[macro_export]
+macro_rules! try_tuple {
+    ($($option:expr),* $(,)?) => {
+        try{
+            ($($option?,)*)
+        }
+    };
+}

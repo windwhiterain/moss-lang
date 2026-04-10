@@ -5,7 +5,7 @@ use type_sitter::{HasChild as _, Node as _, NodeResult};
 use crate::{
     erase_struct,
     interpreter::{
-        Id, InterpreterLikeMut, Location, Managed,
+        Id, InterpreterLikeBasicMut, Location, Managed, Owner,
         diagnose::Diagnostic,
         element::{Element, ElementAuthored, ElementKey, ElementSource},
         expr::{self, Expr},
@@ -36,7 +36,7 @@ enum FindSource {
     MetaFindIn(moss::MetaFindIn<'static>),
 }
 
-impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
+impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
     fn parse_call(&mut self, call: moss::Call<'static>) -> Option<Expr> {
         let func = unsafe {
             self.ip
@@ -50,7 +50,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             .ip
             .add_element(
                 ElementKey::Temp,
-                self.scope.module,
+                self.ip.get(self.element_id).owner,
                 Some(ElementAuthored::Source {
                     source: ElementSource {
                         scope: self.scope.get_id(),
@@ -65,7 +65,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             .ip
             .add_element(
                 ElementKey::Temp,
-                self.scope.module,
+                self.ip.get(self.element_id).owner,
                 Some(ElementAuthored::Source {
                     source: ElementSource {
                         scope: self.scope.get_id(),
@@ -95,11 +95,11 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             self.ip
                 .add_scope(
                     Some(self.scope.get_id()),
+                    self.scope.owner,
                     Some(ScopeAuthored {
                         source,
                         file: self.file_id,
                     }),
-                    self.scope.module,
                 )
                 .get_id()
         }))))
@@ -148,7 +148,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
                 self.ip
                     .add_element(
                         ElementKey::Temp,
-                        self.scope.module,
+                        self.ip.get(self.element_id).owner,
                         Some(ElementAuthored::Source {
                             source: ElementSource {
                                 scope: self.scope.get_id(),
@@ -219,6 +219,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
         ))))
     }
     fn parse_function(&mut self, function: moss::Function<'static>) -> Option<Expr> {
+        let module_id = self.scope.get_module(self.ip);
         let (param_name, scope) = unsafe {
             let param_name = self
                 .ip
@@ -239,48 +240,44 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             None
         };
 
+        let function = erase_mut(self)
+            .ip
+            .add_function(self.scope.owner, Id::DUMMY, Id::DUMMY);
+
         let scope = unsafe {
             // SAFETY: element -> scope
             erase_mut(self).ip.add_scope(
                 Some(self.scope.get_id()),
+                Owner::Function(function.get_id()),
                 Some(ScopeAuthored {
                     source,
                     file: self.file_id,
                 }),
-                self.scope.module,
             )
         };
+        function.scope = scope.get_id();
 
         let param = unsafe {
             erase_mut(self).ip.add(
                 Param {
-                    function: Id::DUMMY,
+                    function: function.get_id(),
                     element: Id::DUMMY,
                     r#type: None,
                 },
-                self.scope.module,
+                module_id,
             )
         };
-        let param_element_id = self
-            .ip
-            .add_element(
-                ElementKey::Name(param_name),
-                scope.module,
-                Some(ElementAuthored::Value(ValueStorage::Param(value::Param(
-                    param.get_id(),
-                )))),
-            )
-            .get_id();
-        scope.elements.insert(param_name, param_element_id);
+        function.param = param.get_id();
+        let param_element = erase_mut(self.ip.add_element(
+            ElementKey::Name(param_name),
+            Owner::Function(function.get_id()),
+            Some(ElementAuthored::Value(ValueStorage::Param(value::Param(
+                param.get_id(),
+            )))),
+        ));
+        param.element = param_element.get_id();
+        scope.elements.insert(param_name, param_element.get_id());
 
-        param.element = param_element_id;
-
-        let function =
-            erase_mut(self)
-                .ip
-                .add_function(self.scope.module, scope.get_id(), param_element_id);
-
-        param.function = function.get_id();
         Some(Expr::Value(ValueStorage::Function(value::Function(
             function.get_id(),
         ))))
@@ -288,13 +285,10 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
     fn parse_set(&mut self, set_source: moss::Set<'static>) -> Option<Expr> {
         let mut cursor = erase_struct!(self.ip.get_file(self.file_id).tree.walk());
         let set = erase_mut(unsafe {
-            self.ip.add::<Set>(
-                Set {
-                    elements: Default::default(),
-                    module: self.scope.module,
-                },
-                self.scope.module,
-            )
+            self.ip.add_mut(Set {
+                elements: Default::default(),
+                owner: self.scope.owner,
+            })
         });
 
         for value in set_source.values(&mut cursor) {
@@ -304,7 +298,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
             } {
                 let element = self.ip.add_element(
                     ElementKey::Temp,
-                    self.scope.module,
+                    self.ip.get(self.element_id).owner,
                     Some(ElementAuthored::Source {
                         source: ElementSource {
                             value_source: value,
@@ -345,7 +339,7 @@ impl<'a, IP: ?Sized + InterpreterLikeMut> Context<'a, IP> {
     }
 }
 
-pub fn parse_value<IP: ?Sized + InterpreterLikeMut>(
+pub fn parse_value<IP: ?Sized + InterpreterLikeBasicMut>(
     ip: &mut IP,
     source: NodeResult<'static, moss::Value<'static>>,
     element_id: Id<Element>,

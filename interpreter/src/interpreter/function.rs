@@ -1,3 +1,4 @@
+use crate::interpreter::Owner;
 use crate::interpreter::set::Set;
 use crate::utils::typed_key::Vec as KeyVec;
 use crate::{
@@ -16,6 +17,7 @@ use crate::{
 pub enum FunctionElementAuthored {
     Expr(Expr),
     Value(ValueStorage),
+    MappedValue(ValueStorage),
     Capture(Id<Element>),
 }
 
@@ -51,19 +53,15 @@ impl FunctionScope {
 
 #[derive(Debug)]
 pub struct FunctionFunction {
+    pub param: Id<Param>,
     pub scope: Id<Scope>,
-    pub param: Id<Element>,
-    pub captures: Vec<Id<Element>>,
 }
 
 impl FunctionFunction {
-    pub fn new(scope: Id<Scope>, param: Id<Element>) -> Self {
-        Self {
-            scope,
-            param,
-            captures: Default::default(),
-        }
-    }
+    pub const DUMMY: Self = Self {
+        param: Id::DUMMY,
+        scope: Id::DUMMY,
+    };
 }
 
 #[derive(Debug)]
@@ -76,7 +74,6 @@ pub struct FunctionBody {
 }
 
 impl FunctionBody {
-    pub const PARAM_ELEMENT_ID: Id<Element> = Id::from_idx(usize::MAX);
     pub fn new() -> Self {
         Self {
             sets: Default::default(),
@@ -91,8 +88,6 @@ impl FunctionBody {
 impl Managed for FunctionBody {
     type Local = ();
 
-    type Onwer = Self;
-
     const NAME: &str = "FunctionBody";
 
     fn get_local(&self) -> &UnsafeCell<Self::Local> {
@@ -103,28 +98,28 @@ impl Managed for FunctionBody {
         unimplemented!()
     }
 
-    fn get_owner(&self) -> super::Owner<Self::Onwer>
+    fn get_module<IP: super::InterpreterLike>(&self, _ip: &IP) -> ModuleId
     where
         Self: Sized,
     {
-        todo!()
+        unimplemented!()
     }
 }
 
 #[derive(Debug)]
 pub struct Function {
     pub scope: Id<Scope>,
-    pub param: Id<Element>,
-    pub module: ModuleId,
+    pub param: Id<Param>,
     pub body: Id<Element>,
+    pub owner: Owner,
 }
 
 impl Function {
-    pub fn new(scope: Id<Scope>, param: Id<Element>, module: ModuleId, body: Id<Element>) -> Self {
+    pub fn new(owner: Owner, scope: Id<Scope>, param: Id<Param>, body: Id<Element>) -> Self {
         Self {
+            owner,
             scope,
             param,
-            module,
             body,
         }
     }
@@ -132,8 +127,6 @@ impl Function {
 
 impl Managed for Function {
     type Local = ();
-
-    type Onwer = Function;
 
     const NAME: &str = "Function";
 
@@ -145,11 +138,11 @@ impl Managed for Function {
         unimplemented!()
     }
 
-    fn get_owner(&self) -> super::Owner<Self::Onwer>
+    fn get_module<IP: super::InterpreterLike>(&self, ip: &IP) -> ModuleId
     where
         Self: Sized,
     {
-        super::Owner::Module(self.module)
+        self.owner.module(ip)
     }
 }
 
@@ -163,8 +156,6 @@ pub struct Param {
 impl Managed for Param {
     type Local = ();
 
-    type Onwer = Function;
-
     const NAME: &str = "Param";
 
     fn get_local(&self) -> &UnsafeCell<Self::Local> {
@@ -175,10 +166,10 @@ impl Managed for Param {
         unimplemented!()
     }
 
-    fn get_owner(&self) -> super::Owner<Self::Onwer>
+    fn get_module<IP: super::InterpreterLike>(&self, ip: &IP) -> ModuleId
     where
         Self: Sized,
     {
-        super::Owner::Managed(self.function)
+        ip.get(self.function).get_module(ip)
     }
 }

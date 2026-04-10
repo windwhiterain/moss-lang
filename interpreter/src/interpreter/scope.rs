@@ -19,10 +19,10 @@ pub struct Scope {
     pub temp_elements: Vec<Id<Element>>,
     pub parent: Option<Id<Scope>>,
     pub authored: Option<ScopeAuthored>,
-    pub module: ModuleId,
     pub local: UnsafeCell<ScopeLocal>,
-    pub depth: usize,
     pub effects: Vec<Id<Element>>,
+    pub complete: Id<Element>,
+    pub owner: Owner,
 }
 
 impl Managed for Scope {
@@ -38,13 +38,11 @@ impl Managed for Scope {
         &mut self.local
     }
 
-    type Onwer = Self;
-
-    fn get_owner(&self) -> super::Owner<Self::Onwer>
+    fn get_module<IP: super::InterpreterLike>(&self, ip: &IP) -> ModuleId
     where
         Self: Sized,
     {
-        Owner::Module(self.module)
+        self.owner.module(ip)
     }
 }
 
@@ -52,21 +50,21 @@ impl Scope {
     pub fn new(
         parent: Option<Id<Scope>>,
         authored: Option<ScopeAuthored>,
-        module: ModuleId,
-        depth: usize,
+        owner: Owner,
+        complete: Id<Element>,
     ) -> Self {
         Self {
             elements: Default::default(),
             temp_elements: Default::default(),
             parent,
             authored,
-            module,
+            owner,
             local: UnsafeCell::new(ScopeLocal {
                 children: Default::default(),
                 diagnoistics: Default::default(),
             }),
-            depth,
             effects: Default::default(),
+            complete,
         }
     }
     pub fn get_file(&self) -> Option<FileId> {

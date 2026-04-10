@@ -1,7 +1,7 @@
 use enum_extract_macro::EnumExtract;
 
 use crate::{
-    interpreter::{Id, element::Element, function::Function, value::ValueStorage},
+    interpreter::{Id, element::Element, function::Function, scope::Scope, value::ValueStorage},
     utils::concurrent_string_interner::StringId,
 };
 
@@ -10,7 +10,7 @@ pub trait HasRef {
     fn iter_ref(&self, _map: impl FnMut(Id<Element>)) {}
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Find {
     pub target: Option<Id<Element>>,
     pub name: StringId,
@@ -31,7 +31,7 @@ impl HasRef for Find {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Ref {
     pub element: Id<Element>,
 }
@@ -46,7 +46,7 @@ impl HasRef for Ref {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Call {
     pub function: Id<Element>,
     pub param: Id<Element>,
@@ -64,7 +64,7 @@ impl HasRef for Call {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct FunctionBody {
     pub function: Id<Function>,
 }
@@ -87,12 +87,17 @@ impl HasRef for ValueStorage {
     }
 }
 
-#[derive(Clone, Debug, EnumExtract)]
+#[derive(Clone, Copy, Debug)]
+pub struct CompleteScope(pub Id<Scope>);
+impl HasRef for CompleteScope {}
+
+#[derive(Clone, Copy, Debug, EnumExtract)]
 pub enum Expr {
     Ref(Ref),
     Find(Find),
     Call(Call),
     FunctionBody(FunctionBody),
+    CompleteScope(CompleteScope),
     Value(ValueStorage),
 }
 
@@ -103,6 +108,7 @@ impl HasRef for Expr {
             Expr::Find(value) => value.map_ref(map),
             Expr::Call(value) => value.map_ref(map),
             Expr::FunctionBody(value) => value.map_ref(map),
+            Expr::CompleteScope(value) => value.map_ref(map),
             Expr::Value(value) => value.map_ref(map),
         }
     }
@@ -113,6 +119,7 @@ impl HasRef for Expr {
             Expr::Find(value) => value.iter_ref(map),
             Expr::Call(value) => value.iter_ref(map),
             Expr::FunctionBody(value) => value.iter_ref(map),
+            Expr::CompleteScope(value) => value.iter_ref(map),
             Expr::Value(value) => value.iter_ref(map),
         }
     }

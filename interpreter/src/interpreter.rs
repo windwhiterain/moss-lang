@@ -1,6 +1,5 @@
 use crate::erase_struct;
 use crate::interpreter::diagnose::Diagnostic;
-use crate::interpreter::element::Dependant;
 use crate::interpreter::element::Element;
 use crate::interpreter::element::ElementAuthored;
 use crate::interpreter::element::ElementKey;
@@ -11,15 +10,15 @@ use crate::interpreter::expr::HasRef as _;
 use crate::interpreter::file::File;
 use crate::interpreter::file::FileId;
 use crate::interpreter::function::Function;
+use crate::interpreter::function::Param;
 use crate::interpreter::module::Module;
 use crate::interpreter::module::ModuleId;
 use crate::interpreter::module::ModuleLocal;
 use crate::interpreter::module::Pools;
 use crate::interpreter::parse::parse_value;
+use crate::interpreter::run::InterpreterLikeMut as _;
 use crate::interpreter::scope::Scope;
 use crate::interpreter::scope::ScopeAuthored;
-use crate::interpreter::thread::Depend;
-use crate::interpreter::thread::Resolve;
 use crate::interpreter::thread::Signal;
 use crate::interpreter::thread::Thread;
 use crate::interpreter::thread::ThreadId;
@@ -108,14 +107,8 @@ impl<T> From<usize> for Id<T> {
     }
 }
 
-pub enum Owner<T> {
-    Module(ModuleId),
-    Managed(Id<T>),
-}
-
 pub trait Managed {
     type Local;
-    type Onwer: Managed;
     const NAME: &str;
     fn get_id(&self) -> Id<Self>
     where
@@ -125,7 +118,7 @@ pub trait Managed {
     }
     fn get_local(&self) -> &UnsafeCell<Self::Local>;
     fn get_local_mut(&mut self) -> &mut UnsafeCell<Self::Local>;
-    fn get_owner(&self) -> Owner<Self::Onwer>
+    fn get_module<IP: InterpreterLike>(&self, ip: &IP) -> ModuleId
     where
         Self: Sized;
 }
@@ -177,6 +170,24 @@ macro_rules! in_module_id {
     };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Owner {
+    Module(ModuleId),
+    Function(Id<Function>),
+}
+
+impl Owner {
+    pub fn dummy(module_id: ModuleId) -> Self {
+        Owner::Module(module_id)
+    }
+    pub fn module<IP: InterpreterLike>(self, ip: &IP) -> ModuleId {
+        match self {
+            Owner::Module(module_id) => module_id,
+            Owner::Function(id) => ip.get(id).get_module(ip),
+        }
+    }
+}
+
 pub struct Interpreter {
     pub workspace_path: PathBuf,
     pub strings: StringInterner,
@@ -213,12 +224,13 @@ impl Interpreter {
     }
     pub fn init(&mut self) {
         let module_id = self.add_module(None);
-        let scope = erase_mut(unsafe { self.add_scope(None, None, module_id) });
+        let owner = Owner::Module(module_id);
+        let scope = erase_mut(unsafe { self.add_scope(None, owner, None) });
         let mod_name = self.str2id("mod");
         let mod_element_id = self
             .add_element(
                 ElementKey::Name(mod_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
                     BuiltinFunction::Mod,
                 ))),
@@ -228,7 +240,7 @@ impl Interpreter {
         let diagnose_element_id = self
             .add_element(
                 ElementKey::Name(diagnose_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
                     BuiltinFunction::Diagnose,
                 ))),
@@ -238,7 +250,7 @@ impl Interpreter {
         let equal_element_id = self
             .add_element(
                 ElementKey::Name(equal_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
                     BuiltinFunction::Equal,
                 ))),
@@ -248,7 +260,7 @@ impl Interpreter {
         let switch_element_id = self
             .add_element(
                 ElementKey::Name(switch_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
                     BuiltinFunction::Switch,
                 ))),
@@ -258,7 +270,7 @@ impl Interpreter {
         let type_of_id = self
             .add_element(
                 ElementKey::Name(type_of_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
                     BuiltinFunction::TypeOf,
                 ))),
@@ -268,7 +280,7 @@ impl Interpreter {
         let with_type_id = self
             .add_element(
                 ElementKey::Name(with_type_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
                     BuiltinFunction::WithType,
                 ))),
@@ -278,7 +290,7 @@ impl Interpreter {
         let find_id = self
             .add_element(
                 ElementKey::Name(find_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
                     BuiltinFunction::Find,
                 ))),
@@ -288,7 +300,7 @@ impl Interpreter {
         let value_of_id = self
             .add_element(
                 ElementKey::Name(value_of_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
                     BuiltinFunction::ValueOf,
                 ))),
@@ -298,7 +310,7 @@ impl Interpreter {
         let int_id = self
             .add_element(
                 ElementKey::Name(int_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::IntType(
                     value::IntType,
                 ))),
@@ -308,7 +320,7 @@ impl Interpreter {
         let string_id = self
             .add_element(
                 ElementKey::Name(string_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::StringType(
                     value::StringType,
                 ))),
@@ -318,7 +330,7 @@ impl Interpreter {
         let error_id = self
             .add_element(
                 ElementKey::Name(error_name),
-                module_id,
+                owner,
                 Some(ElementAuthored::Value(ValueStorage::Error(value::Error))),
             )
             .get_id();
@@ -335,9 +347,9 @@ impl Interpreter {
             (string_name, string_id),
             (error_name, error_id),
         ]);
-        self.set_element_expr(
+        self.set_element_value(
             self.get_module(module_id).root_scope.unwrap(),
-            Expr::Value(ValueStorage::Scope(value::Scope(scope.get_id()))),
+            ValueStorage::Scope(value::Scope(scope.get_id())),
         );
         self.builtin_module = Some(module_id);
     }
@@ -403,7 +415,9 @@ impl Interpreter {
             self.unresolved_modules.push(id);
             self.increase_workload();
         }
-        let root_scope_element_id = self.add_element(ElementKey::Temp, id, None).get_id();
+        let root_scope_element_id = self
+            .add_element(ElementKey::Temp, Owner::Module(id), None)
+            .get_id();
         let module = self.modules.get_mut(id).unwrap();
         module.root_scope = Some(root_scope_element_id);
         id
@@ -584,18 +598,12 @@ pub trait InterpreterLike: Sized {
     fn is_concurrent(&self) -> bool;
     fn is_local_module(&self, id: ModuleId) -> bool;
     fn is_remote_module(&self, id: ModuleId) -> bool;
-    fn get_module_of<T: Managed>(&self, id: Id<T>) -> ModuleId {
-        match self.get::<T>(id).get_owner() {
-            Owner::Module(module_id) => module_id,
-            Owner::Managed(id) => self.get_module_of(id),
-        }
-    }
     fn is_local<T: Managed>(&self, id: Id<T>) -> bool {
-        self.is_local_module(self.get_module_of(id))
+        self.is_local_module(self.get(id).get_module(self))
     }
 
     fn is_remote<T: Managed>(&self, id: Id<T>) -> bool {
-        self.is_remote_module(self.get_module_of(id))
+        self.is_remote_module(self.get(id).get_module(self))
     }
     fn get_worksapce_path(&self) -> &Path;
     fn get_src_path(&self) -> PathBuf {
@@ -618,7 +626,7 @@ pub trait InterpreterLike: Sized {
     /// - `None` if when concurrent, module is not in threads.
     fn get_thread_remote_of_module(&self, module: ModuleId) -> Option<&ThreadRemote>;
     fn get_thread_remote_of<T: Managed>(&self, id: Id<T>) -> Option<&ThreadRemote> {
-        self.get_thread_remote_of_module(self.get_module_of(id))
+        self.get_thread_remote_of_module(self.get(id).get_module(self))
     }
     fn get_module(&self, id: ModuleId) -> &Module;
     /// # Safety
@@ -787,7 +795,9 @@ pub trait InterpreterLike: Sized {
     }
 }
 
-pub trait InterpreterLikeMut: InterpreterLike {
+pub trait InterpreterLikeMut: InterpreterLikeBasicMut + run::InterpreterLikeMut {}
+
+pub trait InterpreterLikeBasicMut: InterpreterLike {
     fn increase_workload(&mut self);
     fn decrease_workload(&mut self) -> usize;
     fn str2id(&mut self, str: &str) -> StringId;
@@ -831,6 +841,11 @@ pub trait InterpreterLikeMut: InterpreterLike {
         debug_assert!(!self.is_concurrent());
         unsafe { &mut *(id.to_idx() as *mut T) }
     }
+    unsafe fn add_mut<T: InPool<Pools> + Managed>(&mut self, value: T) -> &mut T {
+        let module_id = value.get_module(self);
+        let pool = T::get_mut(&mut unsafe { self.get_module_local_mut(module_id) }.pools);
+        pool.insert(value)
+    }
     unsafe fn add<T: InPool<Pools>>(&mut self, value: T, module_id: ModuleId) -> &mut T {
         let pool = T::get_mut(&mut unsafe { self.get_module_local_mut(module_id) }.pools);
         pool.insert(value)
@@ -841,20 +856,19 @@ pub trait InterpreterLikeMut: InterpreterLike {
     unsafe fn add_scope(
         &mut self,
         parent: Option<Id<Scope>>,
+        owner: Owner,
         authored: Option<ScopeAuthored>,
-        module_id: ModuleId,
     ) -> &mut Scope {
-        let depth = if let Some(parent) = parent {
-            self.get(parent).depth + 1
-        } else {
-            0
-        };
-        let scope = unsafe {
-            self.get_module_local_mut(module_id)
-                .pools
-                .get_mut::<Scope>()
-                .insert(Scope::new(parent, authored, module_id, depth))
-        };
+        let scope =
+            unsafe { erase_mut(self.add_mut(Scope::new(parent, authored, owner, Id::DUMMY))) };
+        let complete = self.add_element(
+            ElementKey::Temp,
+            owner,
+            Some(ElementAuthored::Expr(Expr::CompleteScope(
+                expr::CompleteScope(scope.get_id()),
+            ))),
+        );
+        scope.complete = complete.get_id();
         let scope_id = scope.get_id();
         let scope = erase_mut(scope);
         if let Some(parent) = parent {
@@ -900,7 +914,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     scope,
                 };
                 let element =
-                    self.add_element(ElementKey::Name(name), module_id, Some(element_authored));
+                    self.add_element(ElementKey::Name(name), owner, Some(element_authored));
                 let element_id = element.get_id();
                 if let Some(redundant_key_element_id) =
                     scope.elements.insert(name, element.get_id())
@@ -940,8 +954,7 @@ pub trait InterpreterLikeMut: InterpreterLike {
                     },
                     scope,
                 };
-                let element =
-                    self.add_element(ElementKey::Effect, module_id, Some(element_authored));
+                let element = self.add_element(ElementKey::Effect, owner, Some(element_authored));
                 let element_id = element.get_id();
                 scope.effects.push(element_id);
             }
@@ -951,54 +964,47 @@ pub trait InterpreterLikeMut: InterpreterLike {
     fn add_element(
         &mut self,
         key: ElementKey,
-        module_id: ModuleId,
+        owner: Owner,
         authored: Option<ElementAuthored>,
     ) -> &mut Element {
-        let element = unsafe { erase_mut(self).add(Element::new(key, module_id), module_id) };
-        'unresolve: {
-            if let Some(authored) = authored {
-                match authored {
-                    ElementAuthored::Source { source, scope } => {
-                        element.source = Some(source);
-                        let expr = unsafe {
-                            self.parse_value(Ok(source.value_source), element.get_id(), scope)
-                        };
-                        let element_local = element.local.get_mut();
-                        element_local.expr = expr;
-                        scope.temp_elements.push(element.get_id());
-                    }
-                    ElementAuthored::Value(value) => {
-                        let element_local = element.local.get_mut();
-                        element_local.value = Some(value);
-                        element.value = OnceLock::from(value);
-                        break 'unresolve;
-                    }
-                    ElementAuthored::Expr(expr) => {
-                        let element_local = element.local.get_mut();
-                        element_local.expr = Some(expr);
-                    }
+        let element = unsafe { erase_mut(self).add_mut(Element::new(key, owner)) };
+        let mut solved = false;
+        if let Some(authored) = authored {
+            match authored {
+                ElementAuthored::Source { source, scope } => {
+                    element.source = Some(source);
+                    let expr = unsafe {
+                        self.parse_value(Ok(source.value_source), element.get_id(), scope)
+                    };
+                    let element_local = element.local.get_mut();
+                    element_local.expr = expr;
+                    scope.temp_elements.push(element.get_id());
+                }
+                ElementAuthored::Value(value) => {
+                    let element_local = element.local.get_mut();
+                    element_local.value = Some(value);
+                    element.value = OnceLock::from(value);
+                    solved = true;
+                }
+                ElementAuthored::Expr(expr) => {
+                    let element_local = element.local.get_mut();
+                    element_local.expr = Some(expr);
                 }
             }
+        }
+        if !solved {
+            let module_id = element.get_module(self);
             let module = unsafe { self.get_module_local_mut(module_id) };
             module.unresolved_count += 1;
         }
         element
     }
-    fn add_function(
-        &mut self,
-        module_id: ModuleId,
-        scope: Id<Scope>,
-        param: Id<Element>,
-    ) -> &mut Function {
-        let function = unsafe {
-            erase_mut(self).add(
-                Function::new(scope, param, ModuleId::default(), Id::DUMMY),
-                module_id,
-            )
-        };
+    fn add_function(&mut self, owner: Owner, scope: Id<Scope>, param: Id<Param>) -> &mut Function {
+        let function =
+            unsafe { erase_mut(self).add_mut(Function::new(owner, scope, param, Id::DUMMY)) };
         let function_body_element = self.add_element(
             ElementKey::Temp,
-            module_id,
+            owner,
             Some(ElementAuthored::Expr(Expr::FunctionBody(FunctionBody {
                 function: function.get_id(),
             }))),
@@ -1044,171 +1050,6 @@ pub trait InterpreterLikeMut: InterpreterLike {
                 unsafe { self.diagnose(location, Diagnostic::GrammarError {}) };
                 None
             }
-        }
-    }
-    /// # Safety
-    /// - `module_id` is local.
-    unsafe fn run_module(&mut self, module_id: ModuleId) {
-        let module_local = unsafe { erase_mut(self).get_module_local_mut(module_id) };
-        let root_scope_element = self.get_module(module_id).root_scope.unwrap();
-        if let Some(authored) = module_local.authored {
-            let root_scope_id = unsafe { self.add_scope(None, Some(authored), module_id) }.get_id();
-            self.set_element_expr(
-                root_scope_element,
-                Expr::Value(ValueStorage::Scope(value::Scope(root_scope_id))),
-            );
-            module_local.unresolved_count -= 1;
-            for dependant in mem::take(&mut module_local.dependants) {
-                self.resolve_element(dependant);
-            }
-            self.decrease_workload();
-        }
-    }
-    /// # Safety
-    /// - `element_id` is local.
-    unsafe fn run_element(&mut self, element_id: Id<Element>) {
-        let mut element_local = unsafe { self.get_local_mut(element_id) };
-        if element_local.is_running {
-            return;
-        } else {
-            element_local.is_running = true;
-        }
-        if element_local.dependency_count == 0 && !element_local.is_resolved() {
-            element_local.is_running = true;
-            let value = self.run_value(element_id);
-            element_local = unsafe { erase_mut(self).get_local_mut(element_id) };
-            self.set_element_value(
-                element_id,
-                value.unwrap_or(ValueStorage::Error(value::Error)),
-            );
-            element_local.is_running = false;
-        }
-    }
-    /// # Panic
-    /// - when concurrent, element is not in local thread.
-    fn run_value(&mut self, element_id: Id<Element>) -> Option<ValueStorage> {
-        run::Context::run_expr(self, element_id)
-    }
-    fn set_element_expr(&mut self, element_id: Id<Element>, expr: Expr) {
-        let element_local = unsafe { self.get_local_mut(element_id) };
-        assert!(element_local.expr.is_none());
-        element_local.expr = Some(expr);
-        unsafe { self.run_element(element_id) }
-    }
-    /// # Panic
-    /// - when concurrent, element is not in local thread.
-    /// - element's value has been resolved.
-    fn set_element_value(&mut self, element_id: Id<Element>, value: ValueStorage) {
-        let element_local = unsafe { self.get_local_mut(element_id) };
-        assert!(element_local.value.is_none());
-        element_local.value = Some(value);
-        if self.is_concurrent() {
-            let element = self.get(element_id);
-            element.value.set(value).unwrap();
-        } else {
-            let element = unsafe { self.get_mut(element_id) };
-            element.value = OnceLock::from(value);
-        }
-
-        let element_local = unsafe { self.get_local_mut(element_id) };
-        for dependant in mem::take(&mut element_local.dependants) {
-            self.resolve_element(dependant.element_id);
-        }
-        let module = unsafe { self.get_module_local_mut(self.get_module_of(element_id)) };
-        module.unresolved_count -= 1;
-    }
-    /// # Panic
-    /// - when concurrent, dependant is not in local thread.
-    /// - when not concurrent, dependency id is remote.
-    fn depend_element_raw(
-        &mut self,
-        dependant_id: Id<Element>,
-        dependency_id: Id<Element>,
-        source: Option<UntypedNode<'static>>,
-        local: bool,
-    ) -> Option<ValueStorage> {
-        if self.is_local(dependency_id) {
-            unsafe { self.run_element(dependency_id) };
-            let dependency = erase_mut(unsafe { self.get_local_mut(dependency_id) });
-            if local {
-                if let Some(value) = dependency.get_resolved() {
-                    return Some(value);
-                } else {
-                    let dependant_local = unsafe { self.get_local_mut(dependant_id) };
-                    dependant_local.dependency_count += 1;
-                }
-            } else {
-                if dependency.is_resolved() {
-                    self.resolve_element(dependant_id);
-                    return None;
-                }
-            }
-
-            dependency.dependants.push(Dependant {
-                element_id: dependant_id,
-                source,
-            });
-        } else {
-            debug_assert!(local);
-            let dependency = self.get(dependency_id);
-            if let Some(value) = dependency.get_resolved() {
-                return Some(value);
-            }
-            let dependant_local = unsafe { self.get_local_mut(dependant_id) };
-            dependant_local.dependency_count += 1;
-            if let Some(thread) = self.get_thread_remote_of(dependency_id) {
-                log::error!(
-                    "thread {:?}: send depend on {}",
-                    self.thread(),
-                    value::Element(dependency_id).with_ctx(self)
-                );
-                thread.channel.push(Signal::Depend(Depend {
-                    dependant: dependant_id,
-                    dependency: dependency_id,
-                    source,
-                }));
-                self.increase_workload();
-            }
-        }
-        None
-    }
-    fn depend_element(
-        &mut self,
-        dependant_id: Id<Element>,
-        dependency_id: Id<Element>,
-        source: Option<UntypedNode<'static>>,
-    ) -> Option<ValueStorage> {
-        self.depend_element_raw(dependant_id, dependency_id, source, true)
-    }
-    /// # Panic
-    /// - when concurrent, any element is not in local thread.
-    fn depend_child_element(
-        &mut self,
-        dependant_id: Id<Element>,
-        dependency_id: Id<Element>,
-    ) -> Option<ValueStorage> {
-        let dependency = self.get(dependency_id);
-        let source = dependency.source.as_ref().map(|x| x.value_source.upcast());
-        self.depend_element(dependant_id, dependency_id, source)
-    }
-    /// # Panic
-    /// element is not in threads
-    fn resolve_element(&mut self, id: Id<Element>) {
-        if self.is_local(id) {
-            let dependant = unsafe { self.get_local_mut(id) };
-            dependant.dependency_count -= 1;
-            unsafe { self.run_element(id) };
-        } else {
-            let thread = self.get_thread_remote_of(id).unwrap();
-            log::error!(
-                "thread {:?}: send resolve on {}",
-                self.thread(),
-                value::Element(id).with_ctx(self)
-            );
-            thread
-                .channel
-                .push(Signal::Resolve(Resolve { element: id }));
-            self.increase_workload();
         }
     }
 }
@@ -1327,7 +1168,9 @@ impl<'a, IP: Deref<Target = Interpreter>> InterpreterLike for ThreadedInterprete
     }
 }
 
-impl InterpreterLikeMut for Interpreter {
+impl InterpreterLikeMut for Interpreter {}
+impl run::InterpreterLikeMut for Interpreter {}
+impl InterpreterLikeBasicMut for Interpreter {
     fn str2id(&mut self, str: &str) -> StringId {
         self.strings.get_or_intern(str)
     }
@@ -1360,7 +1203,9 @@ impl InterpreterLikeMut for Interpreter {
     }
 }
 
-impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpreter<'a, IP> {
+impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeMut for ThreadedInterpreter<'a, IP> {}
+impl<'a, IP: Deref<Target = Interpreter>> run::InterpreterLikeMut for ThreadedInterpreter<'a, IP> {}
+impl<'a, IP: Deref<Target = Interpreter>> InterpreterLikeBasicMut for ThreadedInterpreter<'a, IP> {
     fn str2id(&mut self, str: &str) -> StringId {
         self.interpreter.concurrent.strings.get_or_intern(str)
     }
