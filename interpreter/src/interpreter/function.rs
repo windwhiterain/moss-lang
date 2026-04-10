@@ -13,7 +13,7 @@ use crate::{
     utils::unsafe_cell::UnsafeCell,
 };
 
-#[derive(Debug)]
+#[derive(Debug,Clone, Copy)]
 pub enum FunctionElementAuthored {
     Expr(Expr),
     Value(ValueStorage),

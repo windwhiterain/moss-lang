@@ -82,7 +82,7 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
         }))
     }
     fn parse_scope(&mut self, scope: moss::Scope<'static>) -> Option<Expr> {
-        Some(Expr::Value(ValueStorage::Scope(value::Scope(unsafe {
+        Some(Expr::EffectiveScope(expr::EffectiveScope(unsafe {
             // SAFETY: element -> scope
             let source = if let Some(scope) = scope.scope_content() {
                 Some(
@@ -102,7 +102,7 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
                     }),
                 )
                 .get_id()
-        }))))
+        })))
     }
     fn parse_find(&mut self, find: FindSource) -> Option<Expr> {
         let (target, name, meta) = unsafe {

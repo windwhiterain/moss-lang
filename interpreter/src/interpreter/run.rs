@@ -53,24 +53,14 @@ impl<'a, IP: InterpreterLikeMut> RunExprContext<'a, IP> {
         ctx.run()
     }
     fn run(&mut self) -> Option<ValueStorage> {
-        match &self.expr {
+        match *self.expr {
             Expr::Ref(_) => self.run_ref(),
             Expr::Find(_) => self.run_find(),
             Expr::Call(_) => self.run_call(),
             Expr::FunctionBody(_) => function::BodyContext::run(self),
             Expr::CompleteScope(_) => self.run_complete_scope(),
-            Expr::Value(value) => {
-                let ret = Some(*value);
-                match value {
-                    ValueStorage::Scope(scope) => self.run_scope(scope.0)?,
-                    ValueStorage::Function(function) => {
-                        let function = self.ip.get(function.0);
-                        self.run_scope(function.scope)?;
-                    }
-                    _ => (),
-                }
-                ret
-            }
+            Expr::EffectiveScope(_) => self.run_effective_scope(),
+            Expr::Value(value) => Some(value)
         }
     }
     fn run_ref(&mut self) -> Option<ValueStorage> {
@@ -166,13 +156,14 @@ impl<'a, IP: InterpreterLikeMut> RunExprContext<'a, IP> {
         }
         None
     }
-    fn run_scope(&mut self, scope: Id<Scope>) -> Option<()> {
-        let scope = erase(self.ip).get(scope);
+    fn run_effective_scope(&mut self) -> Option<ValueStorage> {
+        let scope = self.expr.extract_as_effective_scope();
+        let scope = erase(self.ip).get(scope.0);
         for effect in scope.effects.iter().copied() {
             self.ip
-                .depend_element(self.element.get_id(), effect, None)?;
+                .depend_element(self.element.get_id(), effect, None);
         }
-        Some(())
+        Some(ValueStorage::Scope(value::Scope(scope.get_id())))
     }
 }
 

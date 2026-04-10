@@ -62,9 +62,9 @@ impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
             .0;
         let body = erase(ctx).ip.get(body);
         let mut call_ctx = CallContext::new(ctx.ip, body, param, function.param, ctx.element.owner);
-        *ctx.expr = Expr::Value(ValueStorage::Scope(value::Scope(
+        *ctx.expr = Expr::EffectiveScope(expr::EffectiveScope(
             call_ctx.run_scope(body.root_scope.unwrap()),
-        )));
+        ));
         ctx.run()
     }
     fn run_set(&mut self, id: Id<Set>) -> Id<Set> {
@@ -114,29 +114,28 @@ impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
             return id;
         }
         let function_element = self.body.elements.get(id);
-        let authored = match &function_element.authored {
+        let authored = match function_element.authored {
             FunctionElementAuthored::Expr(expr) => ElementAuthored::Expr({
                 let mut expr = expr.clone();
                 expr.map_ref(|id| self.run_element(id, owner));
                 expr
             }),
             FunctionElementAuthored::MappedValue(value) => {
-                let value = match *value {
+                match value {
                     ValueStorage::Set(value::Set(id)) => {
-                        ValueStorage::Set(value::Set(self.run_set(id)))
+                        ElementAuthored::Value(ValueStorage::Set(value::Set(self.run_set(id))))
                     }
                     ValueStorage::Scope(value::Scope(id)) => {
-                        ValueStorage::Scope(value::Scope(self.run_scope(id)))
+                        ElementAuthored::Value(ValueStorage::Scope(value::Scope(self.run_scope(id))))
                     }
                     ValueStorage::Function(value::Function(id)) => {
-                        ValueStorage::Function(value::Function(self.run_function(id)))
+                        ElementAuthored::Value(ValueStorage::Function(value::Function(self.run_function(id))))
                     }
                     ValueStorage::Element(value::Element(id)) => {
-                        ValueStorage::Element(value::Element(self.run_element(id, owner)))
+                        ElementAuthored::Value(ValueStorage::Element(value::Element(self.run_element(id, owner))))
                     }
                     _ => unreachable!(),
-                };
-                ElementAuthored::Expr(Expr::Value(value))
+                }
             }
             FunctionElementAuthored::Value(value) => match value {
                 ValueStorage::Param(param) => {
@@ -150,9 +149,9 @@ impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
                 }
                 _ => None,
             }
-            .unwrap_or(ElementAuthored::Expr(Expr::Value(*value))),
+            .unwrap_or(ElementAuthored::Value(value)),
             FunctionElementAuthored::Capture(id) => {
-                ElementAuthored::Expr(Expr::Ref(expr::Ref { element: *id }))
+                ElementAuthored::Expr(Expr::Ref(expr::Ref { element: id }))
             }
         };
         let mapped_id = self

@@ -91,6 +91,10 @@ impl HasRef for ValueStorage {
 pub struct CompleteScope(pub Id<Scope>);
 impl HasRef for CompleteScope {}
 
+#[derive(Clone, Copy, Debug)]
+pub struct EffectiveScope(pub Id<Scope>);
+impl HasRef for EffectiveScope {}
+
 #[derive(Clone, Copy, Debug, EnumExtract)]
 pub enum Expr {
     Ref(Ref),
@@ -98,6 +102,7 @@ pub enum Expr {
     Call(Call),
     FunctionBody(FunctionBody),
     CompleteScope(CompleteScope),
+    EffectiveScope(EffectiveScope),
     Value(ValueStorage),
 }
 
@@ -109,6 +114,7 @@ impl HasRef for Expr {
             Expr::Call(value) => value.map_ref(map),
             Expr::FunctionBody(value) => value.map_ref(map),
             Expr::CompleteScope(value) => value.map_ref(map),
+            Expr::EffectiveScope(value) => value.map_ref(map),
             Expr::Value(value) => value.map_ref(map),
         }
     }
@@ -120,6 +126,7 @@ impl HasRef for Expr {
             Expr::Call(value) => value.iter_ref(map),
             Expr::FunctionBody(value) => value.iter_ref(map),
             Expr::CompleteScope(value) => value.iter_ref(map),
+            Expr::EffectiveScope(value) => value.iter_ref(map),
             Expr::Value(value) => value.iter_ref(map),
         }
     }
