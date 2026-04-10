@@ -16,7 +16,7 @@ pub struct ScopeLocal {
 #[derive(Debug)]
 pub struct Scope {
     pub elements: HashMap<StringId, Id<Element>>,
-    pub temp_elements: Vec<Id<Element>>,
+    pub sourced_elements: Vec<Id<Element>>,
     pub parent: Option<Id<Scope>>,
     pub authored: Option<ScopeAuthored>,
     pub local: UnsafeCell<ScopeLocal>,
@@ -55,7 +55,7 @@ impl Scope {
     ) -> Self {
         Self {
             elements: Default::default(),
-            temp_elements: Default::default(),
+            sourced_elements: Default::default(),
             parent,
             authored,
             owner,

@@ -978,7 +978,7 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
                     };
                     let element_local = element.local.get_mut();
                     element_local.expr = expr;
-                    scope.temp_elements.push(element.get_id());
+                    scope.sourced_elements.push(element.get_id());
                 }
                 ElementAuthored::Value(value) => {
                     let element_local = element.local.get_mut();

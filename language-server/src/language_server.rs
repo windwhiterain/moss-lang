@@ -11,9 +11,10 @@ use tower_lsp::{
         CompletionParams, CompletionResponse, Diagnostic as LspDiagnostic, DiagnosticSeverity,
         DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams, Hover,
         HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
-        InitializedParams, MarkedString, MessageType, Position as LspPosition, Range as LspRange,
-        SaveOptions, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
-        TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Url,
+        InitializedParams, InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, MarkedString,
+        MessageType, OneOf, Position as LspPosition, Range as LspRange, SaveOptions,
+        ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
+        TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Url, request,
     },
 };
 
@@ -73,6 +74,23 @@ impl LanguageServer {
             message: message.into(),
             related_information: None,
             tags: None,
+            data: None,
+        }
+    }
+    pub fn make_inlay_hint(
+        &self,
+        source: UntypedNode<'static>,
+        message: impl Into<String>,
+    ) -> InlayHint {
+        let source_end = source.end_position();
+        InlayHint {
+            position: LspPosition::new(source_end.row as u32, source_end.column as u32),
+            label: InlayHintLabel::String(message.into()),
+            kind: Some(InlayHintKind::TYPE),
+            text_edits: None,
+            tooltip: None,
+            padding_left: Some(false),
+            padding_right: Some(false),
             data: None,
         }
     }
@@ -148,12 +166,7 @@ impl LanguageServer {
                         }
                     }
                 }
-                for element_id in scope
-                    .elements
-                    .values()
-                    .chain(scope.temp_elements.iter())
-                    .copied()
-                {
+                for element_id in scope.sourced_elements.iter().copied() {
                     let element_local = unsafe { self.ip.get_local(element_id) };
                     let element = self.ip.get(element_id);
                     if let Some(source) = &element.source {
@@ -167,19 +180,6 @@ impl LanguageServer {
                                 source,
                                 format!("{}", diagnostic.with_ctx(self.ip)),
                                 DiagnosticSeverity::ERROR,
-                            ));
-                        }
-                        if let Some(key_node) = source.key_source {
-                            self.lsp_diagnostics.push(self.ls.make_diagnostic(
-                                key_node.upcast(),
-                                format!(
-                                        "{}",
-                                        element_local
-                                            .value
-                                            .unwrap_or(ValueStorage::Error(value::Error))
-                                            .with_ctx(self.ip),
-                                    ),
-                                DiagnosticSeverity::HINT,
                             ));
                         }
                     }
@@ -225,6 +225,76 @@ impl LanguageServer {
             .publish_diagnostics(uri, lsp_diagnostics, None)
             .await;
     }
+    pub fn inlay_hint(
+        &self,
+        path: impl AsRef<Path>,
+        interpreter: &Interpreter,
+    ) -> Option<Vec<InlayHint>> {
+        let mut inlay_hints = Vec::<InlayHint>::new();
+
+        struct Context<'a> {
+            file_id: FileId,
+            ls: &'a LanguageServer,
+            ip: &'a Interpreter,
+            inlay_hints: &'a mut Vec<InlayHint>,
+        }
+        impl<'a> Context<'a> {
+            fn traverse(&mut self, scope_id: Id<Scope>) {
+                let scope_local = unsafe { self.ip.get_local(scope_id) };
+                let scope = self.ip.get(scope_id);
+                for element_id in scope.elements.values().copied() {
+                    let element_local = unsafe { self.ip.get_local(element_id) };
+                    let element = self.ip.get(element_id);
+                    if let Some(source) = &element.source {
+                        if let Some(key_node) = source.key_source {
+                            self.inlay_hints.push(self.ls.make_inlay_hint(
+                                key_node.upcast(),
+                                format!(
+                                        "{}",
+                                        element_local
+                                            .value
+                                            .unwrap_or(ValueStorage::Error(value::Error))
+                                            .with_ctx(self.ip),
+                                    ),
+                            ));
+                        }
+                    }
+                }
+                for child_id in scope_local.children.iter().copied() {
+                    let child = self.ip.get(child_id);
+                    if let Some(file) = child.get_file()
+                        && file == self.file_id
+                    {
+                        self.traverse(child_id);
+                    }
+                }
+            }
+        }
+        let Some(file_id) = interpreter.find_file(path) else {
+            return None;
+        };
+
+        let file = interpreter.get_file(file_id);
+        let Some(module_id) = file.is_module else {
+            return None;
+        };
+        let module = interpreter.get_module(module_id);
+        let scope_id = interpreter
+            .get_element_value(module.root_scope.unwrap())
+            .unwrap()
+            .as_scope()
+            .unwrap()
+            .0;
+
+        let mut context = Context {
+            file_id,
+            ls: self,
+            ip: interpreter,
+            inlay_hints: &mut inlay_hints,
+        };
+        context.traverse(scope_id);
+        Some(inlay_hints)
+    }
     pub async fn run(&self) {
         {
             let Some(interpreter) = self.interpreter.get() else {
@@ -259,6 +329,10 @@ impl LanguageServer {
                 self.diagnose(uri.clone(), &file.path, &*interpreter).await
             }
         }
+        self.client
+            .send_request::<request::InlayHintRefreshRequest>(())
+            .await
+            .ok();
     }
 }
 
@@ -304,6 +378,7 @@ impl LanguageServerLike for LanguageServer {
                     },
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 completion_provider: None,
                 ..ServerCapabilities::default()
             },
@@ -377,5 +452,19 @@ impl LanguageServerLike for LanguageServer {
         let mut files = self.opened_files.write().await;
         let uri = params.text_document.uri;
         files.remove(&uri);
+    }
+
+    async fn inlay_hint(
+        &self,
+        params: InlayHintParams,
+    ) -> tower_lsp::jsonrpc::Result<Option<Vec<InlayHint>>> {
+        let mut interpreter = self.interpreter.get().unwrap().write().await;
+        let interpreter = &mut *interpreter;
+        let uri = params.text_document.uri;
+        let Some(path) = self.uri2path(&uri, interpreter) else {
+            return Ok(None);
+        };
+        let hints = self.inlay_hint(path, interpreter);
+        Ok(hints)
     }
 }

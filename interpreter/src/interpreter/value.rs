@@ -197,7 +197,7 @@ impl ValueLike for ElementType {
 pub struct Function(pub Id<function::Function>);
 impl Display for Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "->{{}}")
+        write!(f, "->")
     }
 }
 impl ValueLike for Function {
@@ -209,7 +209,7 @@ impl ValueLike for Function {
 pub struct FunctionBody(pub Id<function::FunctionBody>);
 impl Display for FunctionBody {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "->{{..}}")
+        write!(f, "->{{}}")
     }
 }
 impl ValueLike for FunctionBody {
@@ -270,7 +270,7 @@ pub struct Param(pub Id<function::Param>);
 impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Param, Ctx> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let param = self.ctx.get(self.value.0);
-        write!(f, ": ")?;
+        write!(f, ":")?;
         if let Some(r#type) = param.r#type {
             write!(f, "{}", r#type.with_ctx(self.ctx))?;
         } else {
