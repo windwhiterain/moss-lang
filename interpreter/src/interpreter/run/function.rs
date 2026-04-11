@@ -62,10 +62,9 @@ impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
             .0;
         let body = erase(ctx).ip.get(body);
         let mut call_ctx = CallContext::new(ctx.ip, body, param, function.param, ctx.element.owner);
-        *ctx.expr = Expr::EffectiveScope(expr::EffectiveScope(
+        Some(ValueStorage::Scope(value::Scope(
             call_ctx.run_scope(body.root_scope.unwrap()),
-        ));
-        ctx.run()
+        )))
     }
     fn run_set(&mut self, id: Id<Set>) -> Id<Set> {
         if let Some(id) = self.set_map.get(id.to_idx()).copied().flatten() {
@@ -120,23 +119,21 @@ impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
                 expr.map_ref(|id| self.run_element(id, owner));
                 expr
             }),
-            FunctionElementAuthored::MappedValue(value) => {
-                match value {
-                    ValueStorage::Set(value::Set(id)) => {
-                        ElementAuthored::Value(ValueStorage::Set(value::Set(self.run_set(id))))
-                    }
-                    ValueStorage::Scope(value::Scope(id)) => {
-                        ElementAuthored::Value(ValueStorage::Scope(value::Scope(self.run_scope(id))))
-                    }
-                    ValueStorage::Function(value::Function(id)) => {
-                        ElementAuthored::Value(ValueStorage::Function(value::Function(self.run_function(id))))
-                    }
-                    ValueStorage::Element(value::Element(id)) => {
-                        ElementAuthored::Value(ValueStorage::Element(value::Element(self.run_element(id, owner))))
-                    }
-                    _ => unreachable!(),
+            FunctionElementAuthored::MappedValue(value) => match value {
+                ValueStorage::Set(value::Set(id)) => {
+                    ElementAuthored::Value(ValueStorage::Set(value::Set(self.run_set(id))))
                 }
-            }
+                ValueStorage::Scope(value::Scope(id)) => {
+                    ElementAuthored::Value(ValueStorage::Scope(value::Scope(self.run_scope(id))))
+                }
+                ValueStorage::Function(value::Function(id)) => ElementAuthored::Value(
+                    ValueStorage::Function(value::Function(self.run_function(id))),
+                ),
+                ValueStorage::Element(value::Element(id)) => ElementAuthored::Value(
+                    ValueStorage::Element(value::Element(self.run_element(id, owner))),
+                ),
+                _ => unreachable!(),
+            },
             FunctionElementAuthored::Value(value) => match value {
                 ValueStorage::Param(param) => {
                     if param.0 == self.param {

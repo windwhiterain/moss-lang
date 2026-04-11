@@ -2,15 +2,17 @@ use std::collections::HashMap;
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner, diagnose::Diagnostic, element::Element, file::FileId, module::ModuleId,
+        Id, Managed, Owner, element::Element, error::Kind, file::FileId, module::ModuleId,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
 
+pub type Source = moss::ScopeContent<'static>;
+
 #[derive(Debug)]
 pub struct ScopeLocal {
     pub children: Vec<Id<Scope>>,
-    pub diagnoistics: Vec<Diagnostic>,
+    pub diagnoistics: Vec<Kind>,
 }
 
 #[derive(Debug)]
@@ -18,7 +20,7 @@ pub struct Scope {
     pub elements: HashMap<StringId, Id<Element>>,
     pub sourced_elements: Vec<Id<Element>>,
     pub parent: Option<Id<Scope>>,
-    pub authored: Option<ScopeAuthored>,
+    pub source: Option<Source>,
     pub local: UnsafeCell<ScopeLocal>,
     pub effects: Vec<Id<Element>>,
     pub complete: Id<Element>,
@@ -49,7 +51,7 @@ impl Managed for Scope {
 impl Scope {
     pub fn new(
         parent: Option<Id<Scope>>,
-        authored: Option<ScopeAuthored>,
+        source: Option<Source>,
         owner: Owner,
         complete: Id<Element>,
     ) -> Self {
@@ -57,7 +59,7 @@ impl Scope {
             elements: Default::default(),
             sourced_elements: Default::default(),
             parent,
-            authored,
+            source,
             owner,
             local: UnsafeCell::new(ScopeLocal {
                 children: Default::default(),
@@ -67,16 +69,7 @@ impl Scope {
             complete,
         }
     }
-    pub fn get_file(&self) -> Option<FileId> {
-        Some(self.authored?.file)
-    }
     pub fn visible_elements(&self) -> impl Iterator<Item = Id<Element>> {
         self.elements.values().chain(self.effects.iter()).copied()
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ScopeAuthored {
-    pub source: Option<moss::ScopeContent<'static>>,
-    pub file: FileId,
 }

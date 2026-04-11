@@ -1,9 +1,9 @@
 use crate::erase_struct;
-use crate::interpreter::diagnose::Diagnostic;
 use crate::interpreter::element::Element;
 use crate::interpreter::element::ElementAuthored;
 use crate::interpreter::element::ElementKey;
 use crate::interpreter::element::ElementSource;
+use crate::interpreter::error::Kind;
 use crate::interpreter::expr::Expr;
 use crate::interpreter::expr::FunctionBody;
 use crate::interpreter::expr::HasRef as _;
@@ -18,7 +18,6 @@ use crate::interpreter::module::Pools;
 use crate::interpreter::parse::parse_value;
 use crate::interpreter::run::InterpreterLikeMut as _;
 use crate::interpreter::scope::Scope;
-use crate::interpreter::scope::ScopeAuthored;
 use crate::interpreter::thread::Signal;
 use crate::interpreter::thread::Thread;
 use crate::interpreter::thread::ThreadId;
@@ -58,8 +57,8 @@ pub use type_sitter::UntypedNode;
 pub type Tree = type_sitter::Tree<moss::SourceFile<'static>>;
 use crate::utils::typed_key::Vec as KeyVec;
 
-pub mod diagnose;
 pub mod element;
+pub mod error;
 pub mod expr;
 pub mod file;
 pub mod function;
@@ -356,7 +355,7 @@ impl Interpreter {
     pub fn clear(&mut self) {
         self.builtin_module = Default::default();
         for file in self.files.values_mut() {
-            file.is_module = None;
+            file.module = None;
         }
         self.modules.clear();
         self.unresolved_modules.clear();
@@ -388,30 +387,20 @@ impl Interpreter {
     }
     pub fn add_module(&mut self, path: Option<PathBuf>) -> ModuleId {
         let resolved = path.is_none();
-        let (authored, file_id) = if let Some(path) = &path {
-            let file_id = self.find_or_add_file(path);
+
+        let authored = try {
+            let file_id = self.find_or_add_file(&path?);
             let file = erase_mut(self).get_file(file_id);
-            let source = if let Some(scope) = file.tree.root_node().unwrap().scope_content() {
-                Some(scope.unwrap())
-            } else {
-                None
-            };
-            (
-                Some(ScopeAuthored {
-                    source,
-                    file: file_id,
-                }),
-                Some(file_id),
-            )
-        } else {
-            (None, None)
+            let source = file.tree.root_node().ok()?.scope_content()?.ok()?;
+            module::Authored {
+                source,
+                file: file_id,
+            }
         };
 
-        let id = self
-            .modules
-            .insert(Module::new(authored, resolved, file_id));
+        let id = self.modules.insert(Module::new(authored, resolved));
         if let Some(authored) = authored {
-            self.get_file_mut(authored.file).is_module = Some(id);
+            self.get_file_mut(authored.file).module = Some(id);
             self.unresolved_modules.push(id);
             self.increase_workload();
         }
@@ -506,7 +495,7 @@ impl<'a, IP: Deref<Target = Interpreter>> ThreadedInterpreter<'a, IP> {
             self.thread,
             modules
                 .iter()
-                .filter_map(|x| self.get_module(*x).file)
+                .filter_map(|x| self.get_module(*x).authored.map(|x| x.file))
                 .map(|x| self.get_file(x).path.display())
                 .collect::<Vec<_>>()
         );
@@ -588,6 +577,7 @@ pub type StringInterner = crate::utils::concurrent_string_interner::Interner;
 
 pub type ConcurrentStringInterner = crate::utils::concurrent_string_interner::ConcurentInterner;
 
+#[derive(Debug, Clone, Copy)]
 pub enum Location {
     Element(Id<Element>),
     Scope(Id<Scope>),
@@ -615,8 +605,8 @@ pub trait InterpreterLike: Sized {
     fn get_file(&self, id: FileId) -> &File;
     fn find_file(&self, path: impl AsRef<Path>) -> Option<FileId>;
     fn id2str(&self, id: StringId) -> impl Deref<Target = str>;
-    fn get_source_str<'tree>(&self, source: &impl Node<'tree>, file: FileId) -> &str {
-        let file = self.get_file(file);
+    fn get_source_str<'tree>(&self, source: &impl Node<'tree>, module: &Module) -> &str {
+        let file = self.get_file(module.authored.unwrap().file);
         let start = source.start_byte();
         let end = source.end_byte();
         &file.text[start..end]
@@ -801,8 +791,8 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
     fn increase_workload(&mut self);
     fn decrease_workload(&mut self) -> usize;
     fn str2id(&mut self, str: &str) -> StringId;
-    fn get_source_str_id<'tree>(&mut self, source: &impl Node<'tree>, file: FileId) -> StringId {
-        let str = erase(self.get_source_str(source, file));
+    fn get_source_str_id<'tree>(&mut self, source: &impl Node<'tree>, module: &Module) -> StringId {
+        let str = erase(self.get_source_str(source, module));
         self.str2id(str)
     }
     /// # Panic
@@ -857,10 +847,11 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
         &mut self,
         parent: Option<Id<Scope>>,
         owner: Owner,
-        authored: Option<ScopeAuthored>,
+        source: Option<scope::Source>,
     ) -> &mut Scope {
+        let module = erase(self).get_module(owner.module(self));
         let scope =
-            unsafe { erase_mut(self.add_mut(Scope::new(parent, authored, owner, Id::DUMMY))) };
+            unsafe { erase_mut(self.add_mut(Scope::new(parent, source, owner, Id::DUMMY))) };
         let complete = self.add_element(
             ElementKey::Temp,
             owner,
@@ -875,18 +866,11 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
             let parent = unsafe { self.get_local_mut::<Scope>(parent) };
             parent.children.push(scope_id);
         }
-        if let Some(authored) = authored {
-            let mut cursor = erase_struct!(self.get_file(authored.file).tree.walk());
+        if let Some(source) = source {
+            let mut cursor =
+                erase_struct!(self.get_file(module.authored.unwrap().file).tree.walk());
 
-            let assigns = if let Some(scope) = authored.source {
-                Some(scope.assigns(erase_mut(&mut cursor)))
-            } else {
-                None
-            }
-            .into_iter()
-            .flatten();
-
-            for assign in assigns {
+            for assign in source.assigns(erase_mut(&mut cursor)) {
                 let Some(assign) =
                     (unsafe { self.grammar_error(Location::Scope(scope_id), assign) })
                 else {
@@ -904,7 +888,7 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
                     continue;
                 };
 
-                let name = self.get_source_str_id(&key, authored.file);
+                let name = self.get_source_str_id(&key, module);
                 let element_authored = ElementAuthored::Source {
                     source: ElementSource {
                         scope: scope_id,
@@ -920,26 +904,15 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
                     scope.elements.insert(name, element.get_id())
                 {
                     unsafe {
-                        self.diagnose(
-                            Location::Element(element_id),
-                            Diagnostic::RedundantElementKey {},
-                        );
+                        self.diagnose(Location::Element(element_id), Kind::RedundantElementKey {});
                         self.diagnose(
                             Location::Element(redundant_key_element_id),
-                            Diagnostic::RedundantElementKey {},
+                            Kind::RedundantElementKey {},
                         );
                     };
                 }
             }
-
-            let effects = if let Some(scope) = authored.source {
-                Some(scope.effects(erase_mut(&mut cursor)))
-            } else {
-                None
-            }
-            .into_iter()
-            .flatten();
-            for effect in effects {
+            for effect in source.effects(erase_mut(&mut cursor)) {
                 let Some(value) =
                     (unsafe { self.grammar_error(Location::Scope(scope_id), effect) })
                 else {
@@ -1025,7 +998,7 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
     }
     /// # Safety
     /// `location` is local
-    unsafe fn diagnose(&mut self, location: Location, diagnoistic: Diagnostic) {
+    unsafe fn diagnose(&mut self, location: Location, diagnoistic: Kind) {
         match location {
             Location::Element(local_element_id) => {
                 let element = unsafe { self.get_local_mut(local_element_id) };
@@ -1047,7 +1020,7 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
         match result {
             Ok(source) => Some(source),
             Err(_err) => {
-                unsafe { self.diagnose(location, Diagnostic::GrammarError {}) };
+                unsafe { self.diagnose(location, Kind::GrammarError {}) };
                 None
             }
         }

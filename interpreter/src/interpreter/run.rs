@@ -6,8 +6,8 @@ use type_sitter::{Node, UntypedNode};
 use crate::{
     interpreter::{
         Id, InterpreterLikeBasicMut, Location, Managed, Owner,
-        diagnose::Diagnostic,
         element::{Dependant, Element},
+        error::Kind,
         expr::{self, Expr},
         module::ModuleId,
         scope::Scope,
@@ -59,8 +59,7 @@ impl<'a, IP: InterpreterLikeMut> RunExprContext<'a, IP> {
             Expr::Call(_) => self.run_call(),
             Expr::FunctionBody(_) => function::BodyContext::run(self),
             Expr::CompleteScope(_) => self.run_complete_scope(),
-            Expr::EffectiveScope(_) => self.run_effective_scope(),
-            Expr::Value(value) => Some(value)
+            Expr::Value(value) => Some(value),
         }
     }
     fn run_ref(&mut self) -> Option<ValueStorage> {
@@ -84,7 +83,7 @@ impl<'a, IP: InterpreterLikeMut> RunExprContext<'a, IP> {
                     unsafe {
                         self.ip.diagnose(
                             Location::Element(self.element.get_id()),
-                            Diagnostic::CanNotFindIn { value: target },
+                            Kind::CanNotFindIn { value: target },
                         )
                     };
                     return None;
@@ -107,7 +106,7 @@ impl<'a, IP: InterpreterLikeMut> RunExprContext<'a, IP> {
             unsafe {
                 self.ip.diagnose(
                     Location::Element(self.element.get_id()),
-                    Diagnostic::FailedFindElement {},
+                    Kind::FailedFindElement {},
                 )
             };
             return None;
@@ -156,33 +155,25 @@ impl<'a, IP: InterpreterLikeMut> RunExprContext<'a, IP> {
         }
         None
     }
-    fn run_effective_scope(&mut self) -> Option<ValueStorage> {
-        let scope = self.expr.extract_as_effective_scope();
-        let scope = erase(self.ip).get(scope.0);
-        for effect in scope.effects.iter().copied() {
-            self.ip
-                .depend_element(self.element.get_id(), effect, None);
-        }
-        Some(ValueStorage::Scope(value::Scope(scope.get_id())))
-    }
 }
 
 pub trait InterpreterLikeMut: InterpreterLikeBasicMut {
     /// # Safety
     /// - `module_id` is local.
     unsafe fn run_module(&mut self, module_id: ModuleId) {
+        let module = erase(self).get_module(module_id);
         let module_local = unsafe { erase_mut(self).get_module_local_mut(module_id) };
 
-        if let Some(authored) = module_local.authored {
-            let root_scope =
-                unsafe { erase(self.add_scope(None, Owner::Module(module_id), Some(authored))) };
+        if let Some(authored) = module.authored {
+            let root_scope = unsafe {
+                erase(self.add_scope(None, Owner::Module(module_id), Some(authored.source)))
+            };
             let root_scope_element = self.get_module(module_id).root_scope.unwrap();
-            let root_scope_element_local = unsafe { self.get_local_mut(root_scope_element) };
-            root_scope_element_local.expr = Some(Expr::Value(ValueStorage::Scope(value::Scope(
-                root_scope.get_id(),
-            ))));
+            self.set_element_value(
+                root_scope_element,
+                ValueStorage::Scope(value::Scope(root_scope.get_id())),
+            );
             unsafe {
-                self.run_element(root_scope_element);
                 self.run_element(root_scope.complete);
             };
             module_local.unresolved_count -= 1;

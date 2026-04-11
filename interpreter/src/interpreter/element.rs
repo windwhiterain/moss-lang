@@ -5,8 +5,8 @@ use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner, diagnose::Diagnostic, expr::Expr, module::ModuleId, run::Runner,
-        scope::Scope, value::ValueStorage,
+        Id, Managed, Owner, error::Kind, expr::Expr, module::ModuleId, run::Runner, scope::Scope,
+        value::ValueStorage,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };
@@ -24,7 +24,7 @@ pub struct ElementLocal {
     pub value: Option<ValueStorage>,
     pub dependency_count: i64,
     pub dependants: SmallVec<[Dependant; 4]>,
-    pub diagnoistics: Vec<Diagnostic>,
+    pub diagnoistics: Vec<Kind>,
     pub is_running: bool,
     pub runner: Option<Runner>,
 }

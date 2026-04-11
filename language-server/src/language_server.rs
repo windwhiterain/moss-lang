@@ -20,7 +20,7 @@ use tower_lsp::{
 
 use moss_interpreter::{
     interpreter::{
-        Id, Interpreter, InterpreterLike, Node, SRC_FILE_EXTENSION, UntypedNode,
+        Id, Interpreter, InterpreterLike, Managed, Node, SRC_FILE_EXTENSION, UntypedNode,
         file::FileId,
         scope::Scope,
         value::{self, ValueStorage},
@@ -152,54 +152,13 @@ impl LanguageServer {
                     }
                 }
             }
-            fn traverse(&mut self, scope_id: Id<Scope>) {
-                let scope_local = unsafe { self.ip.get_local(scope_id) };
-                let scope = self.ip.get(scope_id);
-                if let Some(authored) = scope.authored {
-                    if let Some(source) = authored.source {
-                        for diagnostic in &scope_local.diagnoistics {
-                            self.lsp_diagnostics.push(self.ls.make_diagnostic(
-                                source.upcast(),
-                                format!("{}", diagnostic.with_ctx(self.ip)),
-                                DiagnosticSeverity::ERROR,
-                            ));
-                        }
-                    }
-                }
-                for element_id in scope.sourced_elements.iter().copied() {
-                    let element_local = unsafe { self.ip.get_local(element_id) };
-                    let element = self.ip.get(element_id);
-                    if let Some(source) = &element.source {
-                        for diagnostic in &element_local.diagnoistics {
-                            let source = if diagnostic.is_key() {
-                                source.key_source.unwrap().upcast()
-                            } else {
-                                source.value_source.upcast()
-                            };
-                            self.lsp_diagnostics.push(self.ls.make_diagnostic(
-                                source,
-                                format!("{}", diagnostic.with_ctx(self.ip)),
-                                DiagnosticSeverity::ERROR,
-                            ));
-                        }
-                    }
-                }
-                for child_id in scope_local.children.iter().copied() {
-                    let child = self.ip.get(child_id);
-                    if let Some(file) = child.get_file()
-                        && file == self.file_id
-                    {
-                        self.traverse(child_id);
-                    }
-                }
-            }
         }
         let Some(file_id) = interpreter.find_file(path) else {
             return;
         };
 
         let file = interpreter.get_file(file_id);
-        let Some(module_id) = file.is_module else {
+        let Some(module_id) = file.module else {
             return;
         };
         let module = interpreter.get_module(module_id);
@@ -219,7 +178,6 @@ impl LanguageServer {
         };
 
         context.grammar();
-        context.traverse(scope_id);
 
         self.client
             .publish_diagnostics(uri, lsp_diagnostics, None)
@@ -231,68 +189,36 @@ impl LanguageServer {
         interpreter: &Interpreter,
     ) -> Option<Vec<InlayHint>> {
         let mut inlay_hints = Vec::<InlayHint>::new();
-
-        struct Context<'a> {
-            file_id: FileId,
-            ls: &'a LanguageServer,
-            ip: &'a Interpreter,
-            inlay_hints: &'a mut Vec<InlayHint>,
-        }
-        impl<'a> Context<'a> {
-            fn traverse(&mut self, scope_id: Id<Scope>) {
-                let scope_local = unsafe { self.ip.get_local(scope_id) };
-                let scope = self.ip.get(scope_id);
-                for element_id in scope.elements.values().copied() {
-                    let element_local = unsafe { self.ip.get_local(element_id) };
-                    let element = self.ip.get(element_id);
-                    if let Some(source) = &element.source {
-                        if let Some(key_node) = source.key_source {
-                            self.inlay_hints.push(self.ls.make_inlay_hint(
-                                key_node.upcast(),
-                                format!(
-                                        "{}",
-                                        element_local
-                                            .value
-                                            .unwrap_or(ValueStorage::Error(value::Error))
-                                            .with_ctx(self.ip),
-                                    ),
-                            ));
-                        }
-                    }
-                }
-                for child_id in scope_local.children.iter().copied() {
-                    let child = self.ip.get(child_id);
-                    if let Some(file) = child.get_file()
-                        && file == self.file_id
-                    {
-                        self.traverse(child_id);
-                    }
-                }
-            }
-        }
         let Some(file_id) = interpreter.find_file(path) else {
             return None;
         };
 
         let file = interpreter.get_file(file_id);
-        let Some(module_id) = file.is_module else {
+        let Some(module_id) = file.module else {
             return None;
         };
-        let module = interpreter.get_module(module_id);
-        let scope_id = interpreter
-            .get_element_value(module.root_scope.unwrap())
-            .unwrap()
-            .as_scope()
-            .unwrap()
-            .0;
+        let module = unsafe { interpreter.get_module_local(module_id) };
 
-        let mut context = Context {
-            file_id,
-            ls: self,
-            ip: interpreter,
-            inlay_hints: &mut inlay_hints,
-        };
-        context.traverse(scope_id);
+        for element in module.pools.elements.iter() {
+            let Some(source) = element.source else {
+                continue;
+            };
+            let Some(key_source) = source.key_source else {
+                continue;
+            };
+            inlay_hints.push(
+                self.make_inlay_hint(
+                    key_source.upcast(),
+                    format!(
+                        "{}",
+                        interpreter
+                            .get_element_value(element.get_id())
+                            .unwrap_or(ValueStorage::Error(value::Error))
+                            .with_ctx(interpreter)
+                    ),
+                ),
+            );
+        }
         Some(inlay_hints)
     }
     pub async fn run(&self) {

@@ -6,12 +6,13 @@ use crate::{
     erase_struct,
     interpreter::{
         Id, InterpreterLikeBasicMut, Location, Managed, Owner,
-        diagnose::Diagnostic,
         element::{Element, ElementAuthored, ElementKey, ElementSource},
+        error::Kind,
         expr::{self, Expr},
         file::FileId,
         function::Param,
-        scope::{Scope, ScopeAuthored},
+        module::Module,
+        scope::Scope,
         set::Set,
         value::{self, ValueStorage},
     },
@@ -26,7 +27,7 @@ struct Context<'a, IP: ?Sized> {
     pub source_child: moss::ValueChild<'static>,
     pub element_id: Id<Element>,
     pub scope: &'a mut Scope,
-    pub file_id: FileId,
+    pub module: &'a Module,
 }
 
 enum FindSource {
@@ -82,7 +83,7 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
         }))
     }
     fn parse_scope(&mut self, scope: moss::Scope<'static>) -> Option<Expr> {
-        Some(Expr::EffectiveScope(expr::EffectiveScope(unsafe {
+        Some(Expr::Value(ValueStorage::Scope(value::Scope(unsafe {
             // SAFETY: element -> scope
             let source = if let Some(scope) = scope.scope_content() {
                 Some(
@@ -93,16 +94,9 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
                 None
             };
             self.ip
-                .add_scope(
-                    Some(self.scope.get_id()),
-                    self.scope.owner,
-                    Some(ScopeAuthored {
-                        source,
-                        file: self.file_id,
-                    }),
-                )
+                .add_scope(Some(self.scope.get_id()), self.scope.owner, source)
                 .get_id()
-        })))
+        }))))
     }
     fn parse_find(&mut self, find: FindSource) -> Option<Expr> {
         let (target, name, meta) = unsafe {
@@ -165,12 +159,17 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
         };
         Some(Expr::Find(expr::Find {
             target,
-            name: self.ip.get_source_str_id(&name, self.file_id),
+            name: self.ip.get_source_str_id(&name, self.module),
             meta,
         }))
     }
     fn parse_string(&mut self, string: moss::String<'static>) -> Option<Expr> {
-        let mut cursor = erase_struct!(self.ip.get_file(self.file_id).tree.walk());
+        let mut cursor = erase_struct!(
+            self.ip
+                .get_file(self.module.authored.unwrap().file)
+                .tree
+                .walk()
+        );
         let mut value: Option<Cow<str>> = None;
         for content in string.contents(erase_mut(&mut cursor)) {
             let content = unsafe {
@@ -184,7 +183,7 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
                     .grammar_error(Location::Element(self.element_id), content.child())
             }? {
                 moss::StringContentChild::StringEscape(string_escape) => {
-                    match erase(self).ip.get_source_str(&string_escape, self.file_id) {
+                    match erase(self).ip.get_source_str(&string_escape, self.module) {
                         "\\\"" => Some("\""),
                         "\\\\" => Some("\\"),
                         "\\n" => Some("\n"),
@@ -196,7 +195,7 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
                             unsafe {
                                 erase_mut(self).ip.diagnose(
                                     Location::Element(self.element_id),
-                                    Diagnostic::StringEscapeError {},
+                                    Kind::StringEscapeError {},
                                 )
                             };
                             None
@@ -204,7 +203,7 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
                     }
                 }
                 moss::StringContentChild::StringRaw(string_raw) => {
-                    Some(erase(self).ip.get_source_str(&string_raw, self.file_id))
+                    Some(erase(self).ip.get_source_str(&string_raw, self.module))
                 }
             }?;
             if let Some(value) = &mut value {
@@ -229,7 +228,7 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
                 .grammar_error(Location::Element(self.element_id), function.scope())?;
             (param_name, scope)
         };
-        let param_name = self.ip.get_source_str_id(&param_name, self.file_id);
+        let param_name = self.ip.get_source_str_id(&param_name, self.module);
 
         let source = if let Some(scope) = scope.scope_content() {
             Some(unsafe {
@@ -249,10 +248,7 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
             erase_mut(self).ip.add_scope(
                 Some(self.scope.get_id()),
                 Owner::Function(function.get_id()),
-                Some(ScopeAuthored {
-                    source,
-                    file: self.file_id,
-                }),
+                source,
             )
         };
         function.scope = scope.get_id();
@@ -283,7 +279,12 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
         ))))
     }
     fn parse_set(&mut self, set_source: moss::Set<'static>) -> Option<Expr> {
-        let mut cursor = erase_struct!(self.ip.get_file(self.file_id).tree.walk());
+        let mut cursor = erase_struct!(
+            self.ip
+                .get_file(self.module.authored.unwrap().file)
+                .tree
+                .walk()
+        );
         let set = erase_mut(unsafe {
             self.ip.add_mut(Set {
                 elements: Default::default(),
@@ -316,7 +317,7 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
     fn parse(&mut self) -> Option<Expr> {
         match self.source_child {
             moss::ValueChild::Int(int) => Some(Expr::Value(ValueStorage::Int(value::Int(
-                self.ip.get_source_str(&int, self.file_id).parse().unwrap(),
+                self.ip.get_source_str(&int, self.module).parse().unwrap(),
             )))),
             moss::ValueChild::String(string) => self.parse_string(string),
             moss::ValueChild::Call(call) => self.parse_call(call),
@@ -348,13 +349,13 @@ pub fn parse_value<IP: ?Sized + InterpreterLikeBasicMut>(
     let source = unsafe { ip.grammar_error(Location::Element(element_id), source) }?;
     let source_child: moss::ValueChild =
         unsafe { ip.grammar_error(Location::Element(element_id), source.child()) }?;
-    let file_id = scope.get_file().unwrap();
+    let module = erase(ip).get_module(scope.get_module(ip));
     let mut ctx = Context {
         ip,
         source_child,
         element_id,
         scope,
-        file_id,
+        module,
     };
     ctx.parse()
 }

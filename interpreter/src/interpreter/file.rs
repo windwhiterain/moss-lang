@@ -14,7 +14,7 @@ pub struct File {
     pub text: String,
     pub parser: Parser,
     pub tree: Tree,
-    pub is_module: Option<ModuleId>,
+    pub module: Option<ModuleId>,
     pub path: PathBuf,
 }
 
@@ -33,7 +33,7 @@ impl File {
             text,
             parser,
             tree,
-            is_module: None,
+            module: None,
             path,
         }
     }
@@ -41,6 +41,6 @@ impl File {
         self.text = fs::read_to_string(interpreter.get_worksapce_path().join(&self.path)).unwrap();
         self.tree = Tree::wrap(self.parser.parse(&self.text, None).unwrap());
         log::error!("sytax:\n{}", self.tree.root_node().to_sexp());
-        self.is_module = None;
+        self.module = None;
     }
 }

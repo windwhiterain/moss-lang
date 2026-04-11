@@ -5,8 +5,8 @@ use type_sitter::UntypedNode;
 use crate::{
     interpreter::{
         Id, Location, Managed as _, SRC_FILE_EXTENSION, SRC_PATH,
-        diagnose::Diagnostic,
         element::Element,
+        error::Kind,
         expr::{self, Expr},
         function::Param,
         module::ModuleId,
@@ -72,7 +72,7 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> Context<'a, IP> {
             .join(&*self.ip.id2str(path))
             .with_extension(SRC_FILE_EXTENSION);
         let file = self.ip.find_file(path)?;
-        let module_id = self.ip.get_file(file).is_module?;
+        let module_id = self.ip.get_file(file).module?;
         let module = self.ip.get_module(module_id);
         let root_scope = self
             .ip
@@ -125,7 +125,7 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> Context<'a, IP> {
             log::error!("diagnose: {:?}", source);
             unsafe {
                 self.ip
-                    .diagnose(Location::Element(source), Diagnostic::Custom { text })
+                    .diagnose(Location::Element(source), Kind::Custom { text })
             };
         }
         Some(ValueStorage::Trivial(value::Trivial))
