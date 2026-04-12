@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner, element::Element, error::Kind, file::FileId, module::ModuleId,
+        Id, Managed, Owner, element::Element, error::Kind, module::ModuleId,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
 };

@@ -5,7 +5,7 @@ use type_sitter::UntypedNode;
 
 use crate::{
     interpreter::{
-        Id, Managed, Owner, error::Kind, expr::Expr, module::ModuleId, run::Runner, scope::Scope,
+        Id, Managed, Owner, expr::Expr, module::ModuleId, run::Runner, scope::Scope,
         value::ValueStorage,
     },
     utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
@@ -16,6 +16,8 @@ pub enum ElementKey {
     Name(StringId),
     Effect,
     Temp,
+    CompleteScope,
+    RootScope,
 }
 
 #[derive(Debug)]
@@ -24,7 +26,6 @@ pub struct ElementLocal {
     pub value: Option<ValueStorage>,
     pub dependency_count: i64,
     pub dependants: SmallVec<[Dependant; 4]>,
-    pub diagnoistics: Vec<Kind>,
     pub is_running: bool,
     pub runner: Option<Runner>,
 }
@@ -80,7 +81,6 @@ impl Element {
                 value: None,
                 dependency_count: 0,
                 dependants: Default::default(),
-                diagnoistics: Default::default(),
                 is_running: false,
                 runner: None,
             }),

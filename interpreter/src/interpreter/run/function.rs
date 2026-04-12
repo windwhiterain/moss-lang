@@ -2,8 +2,9 @@ use std::{collections::HashMap, mem};
 
 use crate::{
     interpreter::{
-        Id, Managed as _, Owner,
+        Id, Location, Managed as _, Owner,
         element::{Element, ElementAuthored, ElementKey},
+        error::Error,
         expr::{self, Expr, HasRef as _},
         function::{
             Function, FunctionBody, FunctionElement, FunctionElementAuthored, FunctionFunction,
@@ -23,10 +24,12 @@ pub struct CallContext<'a, IP> {
     element_map: Vec<Option<Id<Element>>>,
     scope_map: Vec<Option<Id<Scope>>>,
     set_map: Vec<Option<Id<Set>>>,
+    error_map: Vec<Option<Id<Error>>>,
     function_map: Vec<Option<Id<Function>>>,
     mapped_param: Id<Element>,
     owner: Owner,
     param: Id<Param>,
+    functions: Vec<(Id<Function>, Id<Function>)>,
 }
 
 impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
@@ -43,10 +46,12 @@ impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
             element_map: vec![None; body.elements.len()],
             scope_map: vec![None; body.scopes.len()],
             set_map: vec![None; body.sets.len()],
+            error_map: vec![None; body.errors.len()],
             function_map: vec![None; body.functions.len()],
             mapped_param,
             owner,
             param,
+            functions: Default::default(),
         }
     }
     pub fn run(
@@ -62,9 +67,13 @@ impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
             .0;
         let body = erase(ctx).ip.get(body);
         let mut call_ctx = CallContext::new(ctx.ip, body, param, function.param, ctx.element.owner);
-        Some(ValueStorage::Scope(value::Scope(
+        let ret = Some(ValueStorage::Scope(value::Scope(
             call_ctx.run_scope(body.root_scope.unwrap()),
-        )))
+        )));
+        while let Some((function, mapped_funtion)) = call_ctx.functions.pop() {
+            call_ctx.run_function(function, Some(mapped_funtion));
+        }
+        ret
     }
     fn run_set(&mut self, id: Id<Set>) -> Id<Set> {
         if let Some(id) = self.set_map.get(id.to_idx()).copied().flatten() {
@@ -84,6 +93,19 @@ impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
         }
         self.set_map[id.to_idx()] = Some(mapped_set.get_id());
         mapped_set.get_id()
+    }
+    fn run_error(&mut self, id: Id<Error>) -> Id<Error> {
+        if let Some(id) = self.error_map.get(id.to_idx()).copied().flatten() {
+            return id;
+        }
+        let error = *erase(self).body.errors.get(id);
+        let mapped_error = unsafe { erase_mut(self).ip.add(error, self.owner.module(self.ip)) };
+        mapped_error.location = match error.location {
+            Location::Element(id) => Location::Element(self.run_element(id, self.owner)),
+            Location::Scope(id) => Location::Scope(self.run_scope(id)),
+        };
+        self.error_map[id.to_idx()] = Some(mapped_error.get_id());
+        mapped_error.get_id()
     }
     fn run_scope(&mut self, scope_id: Id<Scope>) -> Id<Scope> {
         if let Some(id) = self.scope_map.get(scope_id.to_idx()).copied().flatten() {
@@ -126,12 +148,15 @@ impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
                 ValueStorage::Scope(value::Scope(id)) => {
                     ElementAuthored::Value(ValueStorage::Scope(value::Scope(self.run_scope(id))))
                 }
-                ValueStorage::Function(value::Function(id)) => ElementAuthored::Value(
-                    ValueStorage::Function(value::Function(self.run_function(id))),
-                ),
+                ValueStorage::Function(value::Function(id)) => ElementAuthored::Expr(Expr::Value(
+                    ValueStorage::Function(value::Function(self.run_function(id, None))),
+                )),
                 ValueStorage::Element(value::Element(id)) => ElementAuthored::Value(
                     ValueStorage::Element(value::Element(self.run_element(id, owner))),
                 ),
+                ValueStorage::Error(value::Error(id)) => {
+                    ElementAuthored::Value(ValueStorage::Error(value::Error(self.run_error(id))))
+                }
                 _ => unreachable!(),
             },
             FunctionElementAuthored::Value(value) => match value {
@@ -158,30 +183,33 @@ impl<'a, IP: run::InterpreterLikeMut> CallContext<'a, IP> {
         self.element_map[id.to_idx()] = Some(mapped_id);
         mapped_id
     }
-    fn run_function(&mut self, id: Id<Function>) -> Id<Function> {
-        if let Some(id) = self.function_map.get(id.to_idx()).copied().flatten() {
-            return id;
+    fn run_function(&mut self, id: Id<Function>, mapped_id: Option<Id<Function>>) -> Id<Function> {
+        if let Some(mapped_id) = mapped_id {
+            let function = self.body.functions.get(id);
+            let scope = function.scope;
+            self.owner = Owner::Function(mapped_id);
+            let scope = self.run_scope(scope);
+            let mapped_function = unsafe { self.ip.get_mut(mapped_id) };
+            mapped_function.scope = scope;
+            mapped_id
+        } else {
+            if let Some(id) = self.function_map.get(id.to_idx()).copied().flatten() {
+                return id;
+            }
+            let function = self.body.functions.get(id);
+            let mapped_funcion = self
+                .ip
+                .add_function(self.owner, Id::DUMMY, function.param)
+                .get_id();
+            self.function_map[id.to_idx()] = Some(mapped_funcion);
+            self.functions.push((id, mapped_funcion));
+            mapped_funcion
         }
-        let function = self.body.functions.get(id);
-        let mapped_funcion = erase_mut(self)
-            .ip
-            .add_function(self.owner, Id::DUMMY, function.param);
-        let scope = {
-            let parent_owner = self.owner;
-            self.owner = Owner::Function(mapped_funcion.get_id());
-            let scope = self.run_scope(function.scope);
-            self.owner = parent_owner;
-            scope
-        };
-        mapped_funcion.scope = scope;
-        self.function_map[id.to_idx()] = Some(mapped_funcion.get_id());
-        mapped_funcion.get_id()
     }
 }
 
 pub struct BodyContext<'a, IP: run::InterpreterLikeMut> {
     ip: &'a mut IP,
-    function: &'a Function,
     runner: &'a mut BodyRunner,
     element: Id<Element>,
 }
@@ -192,6 +220,7 @@ pub struct BodyRunner {
     element_map: HashMap<Id<Element>, Id<Element>>,
     scope_map: HashMap<Id<Scope>, Id<Scope>>,
     set_map: HashMap<Id<Set>, Id<Set>>,
+    error_map: HashMap<Id<Error>, Id<Error>>,
     function_map: HashMap<Id<Function>, Id<Function>>,
     elements: Vec<(Id<Element>, Id<Element>)>,
     functions: Vec<(Id<Function>, Id<Function>)>,
@@ -208,6 +237,7 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> BodyContext<'a, IP> {
                 scope_map: Default::default(),
                 set_map: Default::default(),
                 function_map: Default::default(),
+                error_map: Default::default(),
                 elements: Default::default(),
                 functions: Default::default(),
                 owner: Owner::Function(function.get_id()),
@@ -217,7 +247,6 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> BodyContext<'a, IP> {
         let runner = ctx.runner.as_mut().unwrap().extract_as_function_body_mut();
         let mut body_ctx = BodyContext {
             ip: ctx.ip,
-            function,
             runner,
             element: ctx.element.get_id(),
         };
@@ -256,12 +285,32 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> BodyContext<'a, IP> {
 
         let mut mapped = FunctionSet::default();
         for element_id in set.elements.iter().copied() {
-            mapped.elements.push(self.map_element(element_id, None));
+            mapped
+                .elements
+                .push(self.map_element(element_id, None).unwrap_or(element_id));
         }
 
         *self.runner.body.sets.get_mut(mapped_id) = mapped;
 
         self.runner.set_map.insert(id, mapped_id);
+        Some(mapped_id)
+    }
+    fn map_error(&mut self, id: Id<Error>) -> Option<Id<Error>> {
+        let vacant_entry = match erase_mut(self).runner.error_map.entry(id) {
+            std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                return Some(*occupied_entry.get());
+            }
+            std::collections::hash_map::Entry::Vacant(vacant_entry) => vacant_entry,
+        };
+        let mut error = *erase(self).ip.get(id);
+        let location = match error.location {
+            Location::Element(id) => self.map_element(id, None).map(|x| Location::Element(x)),
+            Location::Scope(id) => self.map_scope(id).map(|x| Location::Scope(x)),
+        }?;
+        error.location = location;
+        let mapped_id = self.runner.body.errors.insert(error);
+        vacant_entry.insert(mapped_id);
+        self.runner.error_map.insert(id, mapped_id);
         Some(mapped_id)
     }
     fn map_scope(&mut self, scope_id: Id<Scope>) -> Option<Id<Scope>> {
@@ -281,10 +330,10 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> BodyContext<'a, IP> {
         let mut elements = vec![];
         let mut effects = vec![];
         for element in scope.elements.values().copied() {
-            elements.push(self.map_element(element, None));
+            elements.push(self.map_element(element, None).unwrap_or(element));
         }
         for element in scope.effects.iter().copied() {
-            effects.push(self.map_element(element, None));
+            effects.push(self.map_element(element, None).unwrap_or(element));
         }
         let function_scope = FunctionScope { elements, effects };
 
@@ -319,13 +368,17 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> BodyContext<'a, IP> {
         mapped_function.scope = scope;
         mapped_function.param = param;
     }
-    fn map_element(&mut self, id: Id<Element>, mapped_id: Option<Id<Element>>) -> Id<Element> {
+    fn map_element(
+        &mut self,
+        id: Id<Element>,
+        mapped_id: Option<Id<Element>>,
+    ) -> Option<Id<Element>> {
         let mapped_id = if let Some(mapped_id) = mapped_id {
             mapped_id
         } else {
             let vacant_entry = match self.runner.element_map.entry(id) {
                 std::collections::hash_map::Entry::Occupied(occupied_entry) => {
-                    return *occupied_entry.get();
+                    return Some(*occupied_entry.get());
                 }
                 std::collections::hash_map::Entry::Vacant(vacant_entry) => vacant_entry,
             };
@@ -335,28 +388,41 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> BodyContext<'a, IP> {
             mapped_id
         };
 
+        let obj = erase(self).ip.get(id);
+        if obj.owner != self.runner.owner {
+            return None;
+        }
+
         let function_element = FunctionElement {
             authored: {
                 let Some(value) = self.ip.depend_child_element(self.element, id) else {
                     self.runner.elements.push((id, mapped_id));
-                    return mapped_id;
+                    return Some(mapped_id);
                 };
                 let element_local = unsafe { self.ip.get_local(id) };
                 match value {
                     ValueStorage::Param(param) => {
                         let param = self.ip.get(param.0);
-                        let param_element = self.ip.get(param.element);
-                        if param_element.owner == Owner::Function(self.function.get_id()) {
-                            if let Some(mut expr) = element_local.expr.clone() {
-                                expr.map_ref(|x| self.map_element(x, None));
-                                FunctionElementAuthored::Expr(expr)
-                            } else {
-                                FunctionElementAuthored::Value(ValueStorage::Param(value::Param(
-                                    param.get_id(),
-                                )))
+                        if let Some(mut expr) = element_local.expr.clone() {
+                            match expr {
+                                Expr::Ref(r#ref) => {
+                                    if let Some(element) = self.map_element(r#ref.element, None) {
+                                        FunctionElementAuthored::Expr(Expr::Ref(expr::Ref {
+                                            element,
+                                        }))
+                                    } else {
+                                        FunctionElementAuthored::Capture(r#ref.element)
+                                    }
+                                }
+                                _ => {
+                                    expr.map_ref(|x| self.map_element(x, None).unwrap());
+                                    FunctionElementAuthored::Expr(expr)
+                                }
                             }
                         } else {
-                            FunctionElementAuthored::Capture(param_element.get_id())
+                            FunctionElementAuthored::Value(ValueStorage::Param(value::Param(
+                                param.get_id(),
+                            )))
                         }
                     }
                     ValueStorage::Scope(value::Scope(id)) => {
@@ -369,10 +435,9 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> BodyContext<'a, IP> {
                         }
                     }
                     ValueStorage::Element(value::Element(id)) => {
-                        let element = self.ip.get(id);
-                        if element.owner == Owner::Function(self.function.get_id()) {
+                        if let Some(id) = self.map_element(id, None) {
                             FunctionElementAuthored::MappedValue(ValueStorage::Element(
-                                value::Element(self.map_element(id, None)),
+                                value::Element(id),
                             ))
                         } else {
                             FunctionElementAuthored::Value(ValueStorage::Element(value::Element(
@@ -398,6 +463,15 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> BodyContext<'a, IP> {
                             )))
                         }
                     }
+                    ValueStorage::Error(value::Error(id)) => {
+                        if let Some(id) = self.map_error(id) {
+                            FunctionElementAuthored::MappedValue(ValueStorage::Error(value::Error(
+                                id,
+                            )))
+                        } else {
+                            FunctionElementAuthored::Value(ValueStorage::Error(value::Error(id)))
+                        }
+                    }
                     _ => FunctionElementAuthored::Value(value),
                 }
             },
@@ -406,6 +480,6 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> BodyContext<'a, IP> {
 
         *self.runner.body.elements.get_mut(mapped_id) = function_element;
 
-        mapped_id
+        Some(mapped_id)
     }
 }

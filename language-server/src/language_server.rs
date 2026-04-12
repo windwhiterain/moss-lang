@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -21,7 +21,8 @@ use tower_lsp::{
 use moss_interpreter::{
     interpreter::{
         Id, Interpreter, InterpreterLike, Managed, Node, SRC_FILE_EXTENSION, UntypedNode,
-        file::FileId,
+        error::Error,
+        expr::Expr,
         scope::Scope,
         value::{self, ValueStorage},
     },
@@ -53,6 +54,47 @@ impl LanguageServer {
             interpreter: Default::default(),
             opened_files: RwLock::new(Default::default()),
         }
+    }
+    pub fn make_error_diagnostic<T: InterpreterLike>(
+        &self,
+        error: Error,
+        ip: &T,
+    ) -> Option<LspDiagnostic> {
+        let source = match error.location {
+            moss_interpreter::interpreter::Location::Element(mut id) => loop {
+                let element = ip.get(id);
+                if let Some(source) = element.source {
+                    if error.kind.is_key() {
+                        break source.key_source.map(|x| x.upcast());
+                    } else {
+                        break Some(source.value_source.upcast());
+                    }
+                }
+                let element_local = unsafe { ip.get_local(id) };
+                if let Some(expr) = element_local.expr
+                    && let Expr::Ref(r#ref) = expr
+                {
+                    id = r#ref.element;
+                } else {
+                    log::error!(
+                        "make_error_diagnostic: {}, expr: {:?}, value: {}",
+                        ValueStorage::Element(value::Element(id)).with_ctx(ip),
+                        element_local.expr,
+                        element_local.value.unwrap().with_ctx(ip)
+                    );
+                    break None;
+                }
+            },
+            moss_interpreter::interpreter::Location::Scope(id) => {
+                let scope = ip.get(id);
+                scope.source.map(|x| x.upcast())
+            }
+        }?;
+        Some(self.make_diagnostic(
+            source.upcast(),
+            format!("{}", error.kind.with_ctx(ip)),
+            DiagnosticSeverity::ERROR,
+        ))
     }
     pub fn make_diagnostic(
         &self,
@@ -107,11 +149,12 @@ impl LanguageServer {
         let mut lsp_diagnostics = Vec::<LspDiagnostic>::new();
 
         struct Context<'a> {
-            file_id: FileId,
             ls: &'a LanguageServer,
             ip: &'a Interpreter,
             lsp_diagnostics: &'a mut Vec<LspDiagnostic>,
             cursor: TreeCursor<'static>,
+            error_set: HashSet<Id<Error>>,
+            scope_set: HashSet<Id<Scope>>,
         }
         impl<'a> Context<'a> {
             fn grammar(&mut self) {
@@ -152,6 +195,36 @@ impl LanguageServer {
                     }
                 }
             }
+            fn traverse(&mut self, scope: Id<Scope>) {
+                let scope = self.ip.get(scope);
+                for element in scope.visible_elements() {
+                    let Some(value) = self.ip.get_element_value(element) else {
+                        continue;
+                    };
+                    match value {
+                        ValueStorage::Error(value::Error(error)) => {
+                            if self.error_set.insert(error) {
+                                let error = *self.ip.get(error);
+                                if let Some(diagnostic) =
+                                    self.ls.make_error_diagnostic(error, self.ip)
+                                {
+                                    self.lsp_diagnostics.push(diagnostic);
+                                }
+                            }
+                        }
+                        ValueStorage::Scope(value::Scope(id)) => {
+                            if self.scope_set.insert(id) {
+                                self.traverse(id);
+                            }
+                        }
+                        ValueStorage::Function(value::Function(id)) => {
+                            let function = self.ip.get(id);
+                            self.traverse(function.scope);
+                        }
+                        _ => (),
+                    }
+                }
+            }
         }
         let Some(file_id) = interpreter.find_file(path) else {
             return;
@@ -170,14 +243,22 @@ impl LanguageServer {
             .0;
 
         let mut context = Context {
-            file_id,
             ls: self,
             ip: interpreter,
             lsp_diagnostics: &mut lsp_diagnostics,
             cursor: erase(file).tree.walk(),
+            error_set: Default::default(),
+            scope_set: Default::default(),
         };
 
         context.grammar();
+        context.traverse(scope_id);
+        let module_local = unsafe { interpreter.get_module_local(module_id) };
+        for error in module_local.errors.iter().copied() {
+            if let Some(diagnosic) = self.make_error_diagnostic(error, interpreter) {
+                lsp_diagnostics.push(diagnosic);
+            }
+        }
 
         self.client
             .publish_diagnostics(uri, lsp_diagnostics, None)
@@ -206,18 +287,16 @@ impl LanguageServer {
             let Some(key_source) = source.key_source else {
                 continue;
             };
-            inlay_hints.push(
-                self.make_inlay_hint(
-                    key_source.upcast(),
-                    format!(
+            inlay_hints.push(self.make_inlay_hint(
+                key_source.upcast(),
+                format!(
                         "{}",
                         interpreter
                             .get_element_value(element.get_id())
-                            .unwrap_or(ValueStorage::Error(value::Error))
+                            .unwrap_or(ValueStorage::Unkown(value::Unkown))
                             .with_ctx(interpreter)
                     ),
-                ),
-            );
+            ));
         }
         Some(inlay_hints)
     }

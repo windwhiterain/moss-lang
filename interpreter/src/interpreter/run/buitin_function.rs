@@ -6,7 +6,7 @@ use crate::{
     interpreter::{
         Id, Location, Managed as _, SRC_FILE_EXTENSION, SRC_PATH,
         element::Element,
-        error::Kind,
+        error::{self, Error},
         expr::{self, Expr},
         function::Param,
         module::ModuleId,
@@ -42,7 +42,7 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> Context<'a, IP> {
         };
         match builtin_function {
             BuiltinFunction::Mod => ctx.run_mod(),
-            BuiltinFunction::Diagnose => ctx.run_diagnose(),
+            BuiltinFunction::Error => ctx.run_error(),
             BuiltinFunction::Equal => ctx.run_equal(),
             BuiltinFunction::Switch => ctx.run_switch(),
             BuiltinFunction::TypeOf => ctx.run_type_of(),
@@ -83,36 +83,30 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> Context<'a, IP> {
 
         Some(ValueStorage::Scope(value::Scope(root_scope)))
     }
-    fn run_diagnose(&mut self) -> Option<ValueStorage> {
+    fn run_error(&mut self) -> Option<ValueStorage> {
         let scope = self.param.as_scope().ok()?.0;
-        let condition_key = self.ip.str2id("condition");
-        let source_key = self.ip.str2id("source");
-        let text_key = self.ip.str2id("text");
-        let (condition, source_element, text) = try_tuple!(
+        let location_key = self.ip.str2id("location");
+        let message_key = self.ip.str2id("message");
+        let (source_element, text) = try_tuple!(
             self.ip.depend_element(
                 self.element_id,
-                self.ip.find_element(scope, condition_key, false)?,
+                self.ip.find_element(scope, location_key, false)?,
                 self.source,
             ),
             self.ip.depend_element(
                 self.element_id,
-                self.ip.find_element(scope, source_key, false)?,
-                self.source,
-            ),
-            self.ip.depend_element(
-                self.element_id,
-                self.ip.find_element(scope, text_key, false)?,
+                self.ip.find_element(scope, message_key, false)?,
                 self.source,
             ),
         )?;
-        if let Some(function) = merge_params!(self.ip, condition, source_element, text) {
+        if let Some(function) = merge_params!(self.ip, source_element, text) {
             return Some(ValueStorage::Param(value::Param(unsafe {
                 self.ip
                     .add(
                         Param {
                             function,
                             element: self.element_id,
-                            r#type: Some(ValueStorage::Diagnostic(value::Diagnostic)),
+                            r#type: Some(ValueStorage::ErrorType(value::ErrorType)),
                         },
                         self.module_id,
                     )
@@ -121,14 +115,17 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> Context<'a, IP> {
         }
         let source = source_element.as_element().ok()?.0;
         let text = text.as_string().ok()?.0;
-        if self.ip.is_local(source) {
-            log::error!("diagnose: {:?}", source);
-            unsafe {
-                self.ip
-                    .diagnose(Location::Element(source), Kind::Custom { text })
-            };
+        let error = unsafe {
+            self.ip.add(
+                Error {
+                    kind: error::Kind::Custom { text },
+                    location: Location::Element(source),
+                },
+                self.module_id,
+            )
         }
-        Some(ValueStorage::Trivial(value::Trivial))
+        .get_id();
+        Some(ValueStorage::Error(value::Error(error)))
     }
     fn run_equal(&mut self) -> Option<ValueStorage> {
         let set = self.param.as_set().ok()?;
@@ -230,7 +227,7 @@ impl<'a, 'b: 'a, IP: run::InterpreterLikeMut> Context<'a, IP> {
                     .depend_element(self.element_id, element, self.source)?,
             )
         } else {
-            Some(ValueStorage::Error(value::Error))
+            Some(ValueStorage::Trivial(value::Trivial))
         }
     }
     fn run_type_of(&mut self) -> Option<ValueStorage> {

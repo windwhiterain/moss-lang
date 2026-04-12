@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    interpreter::{InterpreterLike, Location, element::Element, value::ValueStorage},
+    interpreter::{InterpreterLike, Location, Managed, value::ValueStorage},
     utils::{
         concurrent_string_interner::StringId,
         contexted::{Contexted, WithContext},
@@ -10,8 +10,29 @@ use crate::{
 
 #[derive(Clone, Copy, Debug)]
 pub struct Error {
-    kind: Kind,
-    location: Location,
+    pub kind: Kind,
+    pub location: Location,
+}
+
+impl Managed for Error {
+    type Local = ();
+
+    const NAME: &str = "Error";
+
+    fn get_local(&self) -> &crate::utils::unsafe_cell::UnsafeCell<Self::Local> {
+        unimplemented!()
+    }
+
+    fn get_local_mut(&mut self) -> &mut crate::utils::unsafe_cell::UnsafeCell<Self::Local> {
+        unimplemented!()
+    }
+
+    fn get_module<IP: InterpreterLike>(&self, _ip: &IP) -> super::module::ModuleId
+    where
+        Self: Sized,
+    {
+        unimplemented!()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

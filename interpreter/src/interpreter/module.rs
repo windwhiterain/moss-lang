@@ -2,6 +2,7 @@ use crate::{
     gen_pools,
     interpreter::{
         Id,
+        error::Error,
         file::FileId,
         function::{Function, FunctionBody, Param},
         scope,
@@ -16,7 +17,7 @@ use crate::interpreter::{element::Element, scope::Scope};
 
 gen_pools! {
     #[derive(Debug)]
-    pub Pools{scopes:Scope,elements:Element,functions:Function,params:Param,function_bodies:FunctionBody,sets:Set}
+    pub Pools{scopes:Scope,elements:Element,functions:Function,params:Param,function_bodies:FunctionBody,sets:Set,errors:Error}
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +30,7 @@ pub struct Authored {
 pub struct ModuleLocal {
     pub pools: Pools,
     pub unresolved_count: usize,
+    pub errors: Vec<Error>,
 }
 
 pub struct Module {
@@ -58,6 +60,7 @@ impl Module {
             local: UnsafeCell::new(ModuleLocal {
                 pools: Default::default(),
                 unresolved_count: if resolved { 0 } else { 1 },
+                errors: Default::default(),
             }),
             root_scope: Default::default(),
             authored,

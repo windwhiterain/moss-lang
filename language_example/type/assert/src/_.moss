@@ -1,13 +1,22 @@
-b = 1;
-diagnose {condition = b; source = @b; text = "hihihi";};
 assert_key = param -> {
     element = find {scope = param; key = "a";};
-    ret = switch {index = equal [element, error,]; set = [
-        element,
-        {
-            diagnose {condition = element; source = @param; text = "must has a";};
-        },
+    _ = switch {index = equal [element, (),]; set = [
+        value_of element,
+        error { location = @param; message = "must has a";},
     ];};
 };
 
-a = (assert_key {a = 2;}).ret;
+a = (assert_key {a = 2;})._;
+b = (assert_key {b = 2;})._;
+
+assert_type = param -> {
+    type = type_of param;
+    _ = switch {index = equal [type, Int,]; set = [
+        error { location = @param; message = "must be Int";},
+        with_type {value = param; type = Int;},
+    ];
+    };
+};
+
+c = (assert_type 1)._;
+d = (assert_type "1")._;

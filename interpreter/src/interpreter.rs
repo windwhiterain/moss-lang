@@ -3,6 +3,7 @@ use crate::interpreter::element::Element;
 use crate::interpreter::element::ElementAuthored;
 use crate::interpreter::element::ElementKey;
 use crate::interpreter::element::ElementSource;
+use crate::interpreter::error::Error;
 use crate::interpreter::error::Kind;
 use crate::interpreter::expr::Expr;
 use crate::interpreter::expr::FunctionBody;
@@ -74,7 +75,7 @@ mod run;
 pub const SRC_FILE_EXTENSION: &str = "moss";
 pub const SRC_PATH: &str = "src";
 
-pub struct Id<T>(*const T);
+pub struct Id<T>(pub *const T);
 
 unsafe impl<T> Send for Id<T> {}
 
@@ -235,13 +236,13 @@ impl Interpreter {
                 ))),
             )
             .get_id();
-        let diagnose_name = self.str2id("diagnose");
-        let diagnose_element_id = self
+        let error_name = self.str2id("error");
+        let error_element_id = self
             .add_element(
-                ElementKey::Name(diagnose_name),
+                ElementKey::Name(error_name),
                 owner,
                 Some(ElementAuthored::Value(ValueStorage::BuiltinFunction(
-                    BuiltinFunction::Diagnose,
+                    BuiltinFunction::Error,
                 ))),
             )
             .get_id();
@@ -325,17 +326,9 @@ impl Interpreter {
                 ))),
             )
             .get_id();
-        let error_name = self.str2id("error");
-        let error_id = self
-            .add_element(
-                ElementKey::Name(error_name),
-                owner,
-                Some(ElementAuthored::Value(ValueStorage::Error(value::Error))),
-            )
-            .get_id();
         scope.elements = HashMap::from_iter([
             (mod_name, mod_element_id),
-            (diagnose_name, diagnose_element_id),
+            (error_name, error_element_id),
             (equal_name, equal_element_id),
             (switch_name, switch_element_id),
             (type_of_name, type_of_id),
@@ -344,7 +337,6 @@ impl Interpreter {
             (value_of_name, value_of_id),
             (int_name, int_id),
             (string_name, string_id),
-            (error_name, error_id),
         ]);
         self.set_element_value(
             self.get_module(module_id).root_scope.unwrap(),
@@ -405,7 +397,7 @@ impl Interpreter {
             self.increase_workload();
         }
         let root_scope_element_id = self
-            .add_element(ElementKey::Temp, Owner::Module(id), None)
+            .add_element(ElementKey::RootScope, Owner::Module(id), None)
             .get_id();
         let module = self.modules.get_mut(id).unwrap();
         module.root_scope = Some(root_scope_element_id);
@@ -582,6 +574,14 @@ pub enum Location {
     Element(Id<Element>),
     Scope(Id<Scope>),
 }
+impl Location {
+    fn module<T: InterpreterLike>(self, ip: &T) -> ModuleId {
+        match self {
+            Location::Element(id) => ip.get(id).get_module(ip),
+            Location::Scope(id) => ip.get(id).get_module(ip),
+        }
+    }
+}
 pub trait InterpreterLike: Sized {
     fn thread(&self) -> ThreadId;
 
@@ -605,7 +605,8 @@ pub trait InterpreterLike: Sized {
     fn get_file(&self, id: FileId) -> &File;
     fn find_file(&self, path: impl AsRef<Path>) -> Option<FileId>;
     fn id2str(&self, id: StringId) -> impl Deref<Target = str>;
-    fn get_source_str<'tree>(&self, source: &impl Node<'tree>, module: &Module) -> &str {
+    fn get_source_str<'tree>(&self, source: &impl Node<'tree>, module: ModuleId) -> &str {
+        let module = self.get_module(module);
         let file = self.get_file(module.authored.unwrap().file);
         let start = source.start_byte();
         let end = source.end_byte();
@@ -791,7 +792,11 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
     fn increase_workload(&mut self);
     fn decrease_workload(&mut self) -> usize;
     fn str2id(&mut self, str: &str) -> StringId;
-    fn get_source_str_id<'tree>(&mut self, source: &impl Node<'tree>, module: &Module) -> StringId {
+    fn get_source_str_id<'tree>(
+        &mut self,
+        source: &impl Node<'tree>,
+        module: ModuleId,
+    ) -> StringId {
         let str = erase(self.get_source_str(source, module));
         self.str2id(str)
     }
@@ -828,7 +833,6 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
     /// # Safety
     /// - not concurrent.
     unsafe fn get_mut<T>(&mut self, id: Id<T>) -> &mut T {
-        debug_assert!(!self.is_concurrent());
         unsafe { &mut *(id.to_idx() as *mut T) }
     }
     unsafe fn add_mut<T: InPool<Pools> + Managed>(&mut self, value: T) -> &mut T {
@@ -849,11 +853,12 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
         owner: Owner,
         source: Option<scope::Source>,
     ) -> &mut Scope {
-        let module = erase(self).get_module(owner.module(self));
+        let module_id = owner.module(self);
+        let module = erase(self).get_module(module_id);
         let scope =
             unsafe { erase_mut(self.add_mut(Scope::new(parent, source, owner, Id::DUMMY))) };
         let complete = self.add_element(
-            ElementKey::Temp,
+            ElementKey::CompleteScope,
             owner,
             Some(ElementAuthored::Expr(Expr::CompleteScope(
                 expr::CompleteScope(scope.get_id()),
@@ -888,7 +893,7 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
                     continue;
                 };
 
-                let name = self.get_source_str_id(&key, module);
+                let name = self.get_source_str_id(&key, module_id);
                 let element_authored = ElementAuthored::Source {
                     source: ElementSource {
                         scope: scope_id,
@@ -904,11 +909,14 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
                     scope.elements.insert(name, element.get_id())
                 {
                     unsafe {
-                        self.diagnose(Location::Element(element_id), Kind::RedundantElementKey {});
-                        self.diagnose(
-                            Location::Element(redundant_key_element_id),
-                            Kind::RedundantElementKey {},
-                        );
+                        self.diagnose_error(Error {
+                            location: Location::Element(element_id),
+                            kind: Kind::RedundantElementKey {},
+                        });
+                        self.diagnose_error(Error {
+                            location: Location::Element(redundant_key_element_id),
+                            kind: Kind::RedundantElementKey {},
+                        });
                     };
                 }
             }
@@ -998,17 +1006,12 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
     }
     /// # Safety
     /// `location` is local
-    unsafe fn diagnose(&mut self, location: Location, diagnoistic: Kind) {
-        match location {
-            Location::Element(local_element_id) => {
-                let element = unsafe { self.get_local_mut(local_element_id) };
-                element.diagnoistics.push(diagnoistic);
-            }
-            Location::Scope(local_scope_id) => {
-                let scope = unsafe { self.get_local_mut(local_scope_id) };
-                scope.diagnoistics.push(diagnoistic);
-            }
-        }
+    unsafe fn diagnose_error(&mut self, error: Error) {
+        unsafe {
+            self.get_module_local_mut(error.location.module(self))
+                .errors
+                .push(error)
+        };
     }
     /// # Safety
     /// `location` is local.
@@ -1020,7 +1023,12 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
         match result {
             Ok(source) => Some(source),
             Err(_err) => {
-                unsafe { self.diagnose(location, Kind::GrammarError {}) };
+                unsafe {
+                    self.diagnose_error(Error {
+                        location,
+                        kind: Kind::GrammarError {},
+                    })
+                };
                 None
             }
         }

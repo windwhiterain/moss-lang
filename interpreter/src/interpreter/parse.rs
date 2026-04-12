@@ -7,11 +7,10 @@ use crate::{
     interpreter::{
         Id, InterpreterLikeBasicMut, Location, Managed, Owner,
         element::{Element, ElementAuthored, ElementKey, ElementSource},
-        error::Kind,
+        error::{self, Error},
         expr::{self, Expr},
-        file::FileId,
         function::Param,
-        module::Module,
+        module::{ModuleId},
         scope::Scope,
         set::Set,
         value::{self, ValueStorage},
@@ -27,7 +26,7 @@ struct Context<'a, IP: ?Sized> {
     pub source_child: moss::ValueChild<'static>,
     pub element_id: Id<Element>,
     pub scope: &'a mut Scope,
-    pub module: &'a Module,
+    pub module: ModuleId,
 }
 
 enum FindSource {
@@ -164,12 +163,8 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
         }))
     }
     fn parse_string(&mut self, string: moss::String<'static>) -> Option<Expr> {
-        let mut cursor = erase_struct!(
-            self.ip
-                .get_file(self.module.authored.unwrap().file)
-                .tree
-                .walk()
-        );
+        let module = self.ip.get_module(self.module);
+        let mut cursor = erase_struct!(self.ip.get_file(module.authored.unwrap().file).tree.walk());
         let mut value: Option<Cow<str>> = None;
         for content in string.contents(erase_mut(&mut cursor)) {
             let content = unsafe {
@@ -184,28 +179,33 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
             }? {
                 moss::StringContentChild::StringEscape(string_escape) => {
                     match erase(self).ip.get_source_str(&string_escape, self.module) {
-                        "\\\"" => Some("\""),
-                        "\\\\" => Some("\\"),
-                        "\\n" => Some("\n"),
-                        "\\t" => Some("\t"),
-                        "\\r" => Some("\r"),
-                        "\\{" => Some("{"),
-                        "\\}" => Some("}"),
+                        "\\\"" => "\"",
+                        "\\\\" => "\\",
+                        "\\n" => "\n",
+                        "\\t" => "\t",
+                        "\\r" => "\r",
+                        "\\{" => "{",
+                        "\\}" => "}",
                         _ => {
-                            unsafe {
-                                erase_mut(self).ip.diagnose(
-                                    Location::Element(self.element_id),
-                                    Kind::StringEscapeError {},
+                            let error = unsafe {
+                                self.ip.add(
+                                    Error {
+                                        kind: error::Kind::StringEscapeError {},
+                                        location: Location::Element(self.element_id),
+                                    },
+                                    self.module,
                                 )
                             };
-                            None
+                            return Some(Expr::Value(ValueStorage::Error(value::Error(
+                                error.get_id(),
+                            ))));
                         }
                     }
                 }
                 moss::StringContentChild::StringRaw(string_raw) => {
-                    Some(erase(self).ip.get_source_str(&string_raw, self.module))
+                    erase(self).ip.get_source_str(&string_raw, self.module)
                 }
-            }?;
+            };
             if let Some(value) = &mut value {
                 value.to_mut().push_str(content_value);
             } else {
@@ -279,12 +279,8 @@ impl<'a, IP: ?Sized + InterpreterLikeBasicMut> Context<'a, IP> {
         ))))
     }
     fn parse_set(&mut self, set_source: moss::Set<'static>) -> Option<Expr> {
-        let mut cursor = erase_struct!(
-            self.ip
-                .get_file(self.module.authored.unwrap().file)
-                .tree
-                .walk()
-        );
+        let module = self.ip.get_module(self.module);
+        let mut cursor = erase_struct!(self.ip.get_file(module.authored.unwrap().file).tree.walk());
         let set = erase_mut(unsafe {
             self.ip.add_mut(Set {
                 elements: Default::default(),
@@ -349,7 +345,7 @@ pub fn parse_value<IP: ?Sized + InterpreterLikeBasicMut>(
     let source = unsafe { ip.grammar_error(Location::Element(element_id), source) }?;
     let source_child: moss::ValueChild =
         unsafe { ip.grammar_error(Location::Element(element_id), source.child()) }?;
-    let module = erase(ip).get_module(scope.get_module(ip));
+    let module = scope.get_module(ip);
     let mut ctx = Context {
         ip,
         source_child,

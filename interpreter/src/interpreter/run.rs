@@ -7,10 +7,9 @@ use crate::{
     interpreter::{
         Id, InterpreterLikeBasicMut, Location, Managed, Owner,
         element::{Dependant, Element},
-        error::Kind,
+        error::{self, Error},
         expr::{self, Expr},
         module::ModuleId,
-        scope::Scope,
         thread::{Depend, Resolve, Signal},
         value::{self, ValueStorage},
     },
@@ -80,13 +79,16 @@ impl<'a, IP: InterpreterLikeMut> RunExprContext<'a, IP> {
                     self.ip.find_element(scope_id, find.name, false)
                 }
                 _ => {
-                    unsafe {
-                        self.ip.diagnose(
-                            Location::Element(self.element.get_id()),
-                            Kind::CanNotFindIn { value: target },
+                    let error = unsafe {
+                        self.ip.add(
+                            Error {
+                                kind: error::Kind::CanNotFindIn { value: target },
+                                location: Location::Element(self.element.get_id()),
+                            },
+                            self.module_id,
                         )
                     };
-                    return None;
+                    return Some(ValueStorage::Error(value::Error(error.get_id())));
                 }
             }
         } else {
@@ -103,13 +105,16 @@ impl<'a, IP: InterpreterLikeMut> RunExprContext<'a, IP> {
                 Some(ValueStorage::Element(value::Element(find_element_id)))
             }
         } else {
-            unsafe {
-                self.ip.diagnose(
-                    Location::Element(self.element.get_id()),
-                    Kind::FailedFindElement {},
+            let error = unsafe {
+                self.ip.add(
+                    Error {
+                        kind: error::Kind::FailedFindElement {},
+                        location: Location::Element(self.element.get_id()),
+                    },
+                    self.module_id,
                 )
             };
-            return None;
+            return Some(ValueStorage::Error(value::Error(error.get_id())));
         }
     }
     fn run_call(&mut self) -> Option<ValueStorage> {
@@ -133,7 +138,7 @@ impl<'a, IP: InterpreterLikeMut> RunExprContext<'a, IP> {
     fn run_complete_scope(&mut self) -> Option<ValueStorage> {
         let scope = self.expr.extract_as_complete_scope();
         let scope = erase(self.ip.get(scope.0));
-        for element in scope.elements.values().copied() {
+        for element in scope.visible_elements() {
             try {
                 let value = self
                     .ip
@@ -142,6 +147,17 @@ impl<'a, IP: InterpreterLikeMut> RunExprContext<'a, IP> {
                     ValueStorage::Scope(scope) => {
                         let scope = self.ip.get(scope.0);
                         if scope.owner == self.element.owner {
+                            self.ip.depend_element(
+                                self.element.get_id(),
+                                scope.complete,
+                                self.source,
+                            );
+                        }
+                    }
+                    ValueStorage::Function(function) => {
+                        let function = self.ip.get(function.0);
+                        if function.owner == self.element.owner {
+                            let scope = self.ip.get(function.scope);
                             self.ip.depend_element(
                                 self.element.get_id(),
                                 scope.complete,
@@ -161,21 +177,22 @@ pub trait InterpreterLikeMut: InterpreterLikeBasicMut {
     /// # Safety
     /// - `module_id` is local.
     unsafe fn run_module(&mut self, module_id: ModuleId) {
-        let module = erase(self).get_module(module_id);
-        let module_local = unsafe { erase_mut(self).get_module_local_mut(module_id) };
+        let module = self.get_module(module_id);
 
         if let Some(authored) = module.authored {
-            let root_scope = unsafe {
-                erase(self.add_scope(None, Owner::Module(module_id), Some(authored.source)))
-            };
+            let root_scope =
+                unsafe { self.add_scope(None, Owner::Module(module_id), Some(authored.source)) };
+            let root_scope_id = root_scope.get_id();
+            let root_scope_complete = root_scope.complete;
             let root_scope_element = self.get_module(module_id).root_scope.unwrap();
             self.set_element_value(
                 root_scope_element,
-                ValueStorage::Scope(value::Scope(root_scope.get_id())),
+                ValueStorage::Scope(value::Scope(root_scope_id)),
             );
             unsafe {
-                self.run_element(root_scope.complete);
+                self.run_element(root_scope_complete);
             };
+            let module_local = unsafe { self.get_module_local_mut(module_id) };
             module_local.unresolved_count -= 1;
             self.decrease_workload();
         }
@@ -183,20 +200,21 @@ pub trait InterpreterLikeMut: InterpreterLikeBasicMut {
     /// # Safety
     /// - `element_id` is local.
     unsafe fn run_element(&mut self, element_id: Id<Element>) {
-        let mut element_local = unsafe { self.get_local_mut(element_id) };
+        let element_local = unsafe { self.get_local_mut(element_id) };
         if element_local.is_running {
             return;
-        } else {
-            element_local.is_running = true;
         }
         if element_local.dependency_count == 0 && !element_local.is_resolved() {
             element_local.is_running = true;
             let value = RunExprContext::run_expr(self, element_id);
-            element_local = unsafe { erase_mut(self).get_local_mut(element_id) };
-            self.set_element_value(
-                element_id,
-                value.unwrap_or(ValueStorage::Error(value::Error)),
-            );
+            let element_local = unsafe { self.get_local_mut(element_id) };
+            if element_local.dependency_count == 0 {
+                self.set_element_value(
+                    element_id,
+                    value.unwrap_or(ValueStorage::Trivial(value::Trivial)),
+                );
+            }
+            let element_local = unsafe { self.get_local_mut(element_id) };
             element_local.is_running = false;
         }
     }
@@ -316,5 +334,10 @@ pub trait InterpreterLikeMut: InterpreterLikeBasicMut {
         }
         let module = unsafe { self.get_module_local_mut(self.get(element_id).get_module(self)) };
         module.unresolved_count -= 1;
+        log::error!(
+            "set {} to {}",
+            ValueStorage::Element(value::Element(element_id)).with_ctx(self),
+            value.with_ctx(self)
+        )
     }
 }

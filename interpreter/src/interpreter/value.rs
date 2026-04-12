@@ -4,6 +4,7 @@ use crate::{
     interpreter::{
         Id,
         element::{self, ElementKey},
+        error,
         function::{self},
         scope::{self},
         set,
@@ -24,7 +25,7 @@ pub trait ValueLike {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinFunction {
     Mod,
-    Diagnose,
+    Error,
     Equal,
     Switch,
     TypeOf,
@@ -37,7 +38,7 @@ impl fmt::Display for BuiltinFunction {
         write!(f, "*")?;
         match self {
             BuiltinFunction::Mod => write!(f, "mod"),
-            BuiltinFunction::Diagnose => write!(f, "diagnose"),
+            BuiltinFunction::Error => write!(f, "error"),
             BuiltinFunction::Equal => write!(f, "equal"),
             BuiltinFunction::Switch => write!(f, "switch"),
             BuiltinFunction::TypeOf => write!(f, "type_of"),
@@ -172,6 +173,8 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Element, Ctx> 
             ElementKey::Name(name) => &*self.ctx.id2str(name),
             ElementKey::Effect => "<Effect>",
             ElementKey::Temp => "<Temp>",
+            ElementKey::CompleteScope => "<CompleteScope>",
+            ElementKey::RootScope => "<RootScope>",
         };
         write!(f, "@{}", name)
     }
@@ -254,15 +257,15 @@ impl ValueLike for Trivial {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Error;
-impl Display for Error {
+pub struct Unkown;
+impl Display for Unkown {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "?")
     }
 }
-impl ValueLike for Error {
+impl ValueLike for Unkown {
     fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
-        Some(ValueStorage::Error(Error))
+        Some(ValueStorage::Unkown(Unkown))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,17 +285,30 @@ impl<'a, Ctx: ?Sized + InterpreterLike> Display for Contexted<'a, Param, Ctx> {
 impl ValueLike for Param {
     fn get_type(self, ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         let param = ctx.get(self.0);
-        Some(param.r#type.unwrap_or(ValueStorage::Error(Error)))
+        Some(param.r#type.unwrap_or(ValueStorage::Unkown(Unkown)))
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Diagnostic;
-impl Display for Diagnostic {
+pub struct Error(pub Id<error::Error>);
+impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Diagnostic")
+        write!(f, "!")
     }
 }
-impl ValueLike for Diagnostic {
+impl ValueLike for Error {
+    fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
+        Some(ValueStorage::ErrorType(ErrorType))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ErrorType;
+impl Display for ErrorType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Error")
+    }
+}
+impl ValueLike for ErrorType {
     fn get_type(self, _ctx: &impl InterpreterLike) -> Option<ValueStorage> {
         Some(ValueStorage::TypeType(TypeType))
     }
@@ -311,14 +327,15 @@ pub enum ValueStorage {
     Element(Element),
     ElementType(ElementType),
     Function(Function),
-    FunctionBody(FunctionBody),
     FunctionType(FunctionType),
+    FunctionBody(FunctionBody),
     TypeType(TypeType),
     BuiltinFunction(BuiltinFunction),
+    Unkown(Unkown),
     Error(Error),
+    ErrorType(ErrorType),
     Trivial(Trivial),
     Param(Param),
-    Diagnostic(Diagnostic),
 }
 
 impl ValueStorage {
@@ -353,9 +370,10 @@ impl ValueStorage {
             ValueStorage::TypeType(value) => value.get_type(ctx),
             ValueStorage::BuiltinFunction(value) => value.get_type(ctx),
             ValueStorage::Error(value) => value.get_type(ctx),
+            ValueStorage::ErrorType(value) => value.get_type(ctx),
             ValueStorage::Trivial(value) => value.get_type(ctx),
             ValueStorage::Param(value) => value.get_type(ctx),
-            ValueStorage::Diagnostic(value) => value.get_type(ctx),
+            ValueStorage::Unkown(value) => value.get_type(ctx),
         }
     }
 }
@@ -389,9 +407,10 @@ impl<'a, Ctx: InterpreterLike + ?Sized> Display for Contexted<'a, ValueStorage, 
             ValueStorage::TypeType(value) => write!(f, "{}", value),
             ValueStorage::BuiltinFunction(value) => write!(f, "{}", value),
             ValueStorage::Error(value) => write!(f, "{}", value),
+            ValueStorage::ErrorType(value) => write!(f, "{}", value),
             ValueStorage::Trivial(value) => write!(f, "{}", value),
             ValueStorage::Param(value) => write!(f, "{}", value.with_ctx(self.ctx)),
-            ValueStorage::Diagnostic(value) => write!(f, "{}", value),
+            ValueStorage::Unkown(value) => write!(f, "{}", value),
         }
     }
 }

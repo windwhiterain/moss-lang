@@ -1,36 +1,13 @@
-use std::{
-    hash::Hash,
-    ops::Deref,
-    sync::atomic::{AtomicUsize, Ordering},
-};
-
-use dashmap::DashMap;
 use hashbrown::{DefaultHashBuilder, HashMap, hash_map::RawEntryMut};
-use parking_lot::RwLock;
-use sharded_slab::Slab;
 use std::hash::BuildHasher;
 use std::hash::Hasher;
+use std::{hash::Hash, ops::Deref};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StringId(usize);
 
 impl StringId {
     pub const DUMMY: StringId = StringId(0);
-}
-
-pub struct SymbolAllocator {
-    next: AtomicUsize,
-}
-impl SymbolAllocator {
-    pub fn new() -> Self {
-        Self {
-            next: AtomicUsize::new(0),
-        }
-    }
-    pub fn alloc(&self) -> StringId {
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
-        StringId(id)
-    }
 }
 
 pub struct Interner {
@@ -75,60 +52,44 @@ impl Interner {
         self.id2strings[id.0].as_str()
     }
     pub fn sync_from(&mut self, concurent: &ConcurentInterner) {
-        for i in self.id2strings.len()..concurent.alloc.next.load(Ordering::Relaxed) {
+        for i in self.id2strings.len()..concurent.inner.len() {
             self.get_or_intern(&concurent.resolve(StringId(i)));
         }
     }
 }
 
+impl inturn::InternerSymbol for StringId {
+    fn try_from_usize(id: usize) -> Option<Self> {
+        Some(Self(id))
+    }
+
+    fn to_usize(self) -> usize {
+        self.0
+    }
+}
+
 pub struct ConcurentInterner {
-    map: DashMap<String, StringId>,
-    strings: Slab<String>,
-    id2string: RwLock<Vec<usize>>,
-    alloc: SymbolAllocator,
+    inner: inturn::Interner<StringId>,
 }
 
 impl ConcurentInterner {
     pub fn new() -> Self {
         Self {
-            map: Default::default(),
-            strings: Default::default(),
-            id2string: RwLock::new(Default::default()),
-            alloc: SymbolAllocator::new(),
+            inner: inturn::Interner::<StringId>::with_capacity_and_hasher(0, Default::default()),
         }
     }
 
     pub fn get_or_intern(&self, s: &str) -> StringId {
-        if let Some(sym) = self.map.get(s) {
-            return *sym;
-        }
-
-        let entry = self.map.entry(s.to_string()).or_insert_with(|| {
-            let sym = self.alloc.alloc();
-            let mut vec = self.id2string.write();
-            vec.push(self.strings.insert(s.to_string()).unwrap());
-            sym
-        });
-        *entry
+        self.inner.intern(s)
     }
 
     pub fn resolve(&self, id: StringId) -> impl Deref<Target = str> {
-        AsStr(self.strings.get(self.id2string.read()[id.0]).unwrap())
+        self.inner.resolve(id)
     }
 
     pub fn sync_from(&mut self, interner: &Interner) {
-        for i in self.alloc.next.load(Ordering::Relaxed)..interner.id2strings.len() {
+        for i in self.inner.len()..interner.id2strings.len() {
             self.get_or_intern(&interner.resolve(StringId(i)));
         }
-    }
-}
-
-pub struct AsStr<T: Deref<Target = String>>(T);
-
-impl<T: Deref<Target = String>> Deref for AsStr<T> {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.as_str()
     }
 }

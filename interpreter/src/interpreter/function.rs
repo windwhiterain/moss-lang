@@ -1,4 +1,5 @@
 use crate::interpreter::Owner;
+use crate::interpreter::error::Error;
 use crate::interpreter::set::Set;
 use crate::utils::typed_key::Vec as KeyVec;
 use crate::{
@@ -70,6 +71,7 @@ pub struct FunctionBody {
     pub scopes: KeyVec<Id<Scope>, FunctionScope>,
     pub elements: KeyVec<Id<Element>, FunctionElement>,
     pub functions: KeyVec<Id<Function>, FunctionFunction>,
+    pub errors: KeyVec<Id<Error>, Error>,
     pub root_scope: Option<Id<Scope>>,
 }
 
@@ -80,6 +82,7 @@ impl FunctionBody {
             scopes: Default::default(),
             elements: Default::default(),
             functions: Default::default(),
+            errors: Default::default(),
             root_scope: Default::default(),
         }
     }
