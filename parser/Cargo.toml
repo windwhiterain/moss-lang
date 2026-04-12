@@ -1,0 +1,9 @@
+[package]
+name = "moss-parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+type-sitter = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-moss = { workspace = true }

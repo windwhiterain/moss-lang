@@ -1789,7 +1789,7 @@ pub mod anon_unions {
     {
         type WithLifetime<'a> =
             Bracket_Call_Find_FindIn_Function_Int_MetaFind_MetaFindIn_Scope_Set_String_Trivial<'a>;
-        const KIND: &'static str = "{bracket | call | find | find_in | function | int | meta_find | meta_find_in | scope | set | string | trivial}";
+        const KIND : & 'static str = "{bracket | call | find | find_in | function | int | meta_find | meta_find_in | scope | set | string | trivial}" ;
         #[inline]
         fn try_from_raw(
             node: ::type_sitter::raw::Node<'tree>,

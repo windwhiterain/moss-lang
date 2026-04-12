@@ -17,9 +17,7 @@ slotmap = "1.0.7"
 smallvec = "1.15.1"
 strum = { version = "0.27.2", features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros","sync"] }
-tree-sitter = {workspace = true}
-tree-sitter-moss =  {workspace = true}
-type-sitter =  {workspace = true}
+moss-parser = {path = "../parser"}
 
 [build-dependencies]
 cc = "*"

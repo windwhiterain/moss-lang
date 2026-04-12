@@ -1,0 +1,11 @@
+mod generated;
+pub use generated::*;
+pub use type_sitter::HasChild;
+pub type ValueChild<'t> = <Value<'t> as HasChild<'t>>::Child;
+pub type StringContentChild<'t> = <StringContent<'t> as HasChild<'t>>::Child;
+pub use type_sitter::Node;
+pub use type_sitter::NodeResult;
+pub use type_sitter::UntypedNode;
+pub type Tree = type_sitter::Tree<SourceFile<'static>>;
+pub use tree_sitter::Parser;
+pub use tree_sitter_moss::LANGUAGE;

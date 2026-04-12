@@ -1,14 +1,14 @@
 use enum_extract_macro::EnumExtract;
 use smallvec::SmallVec;
 use std::sync::OnceLock;
-use type_sitter::UntypedNode;
+use moss_parser::UntypedNode;
 
 use crate::{
     interpreter::{
         Id, Managed, Owner, expr::Expr, module::ModuleId, run::Runner, scope::Scope,
         value::ValueStorage,
     },
-    utils::{concurrent_string_interner::StringId, moss, unsafe_cell::UnsafeCell},
+    utils::{concurrent_string_interner::StringId, unsafe_cell::UnsafeCell},
 };
 
 #[derive(Clone, Copy, Debug, EnumExtract)]
@@ -96,8 +96,8 @@ impl Element {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ElementSource {
-    pub value_source: moss::Value<'static>,
-    pub key_source: Option<moss::Name<'static>>,
+    pub value_source: moss_parser::Value<'static>,
+    pub key_source: Option<moss_parser::Name<'static>>,
     pub scope: Id<Scope>,
 }
 

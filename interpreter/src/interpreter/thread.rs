@@ -1,6 +1,6 @@
 use std::{cell::UnsafeCell, sync::Arc};
 
-use type_sitter::UntypedNode;
+use moss_parser::UntypedNode;
 
 use crate::{
     interpreter::{Id, element::Element, module::ModuleId},

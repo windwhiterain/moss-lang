@@ -51,11 +51,10 @@ use tokio::sync::Notify;
 use tokio::sync::futures::Notified;
 use tokio::task::JoinSet;
 
-use crate::utils::moss;
-pub use type_sitter::Node;
-use type_sitter::NodeResult;
-pub use type_sitter::UntypedNode;
-pub type Tree = type_sitter::Tree<moss::SourceFile<'static>>;
+pub use moss_parser::Node;
+use moss_parser::NodeResult;
+pub use moss_parser::UntypedNode;
+pub use moss_parser::Tree;
 use crate::utils::typed_key::Vec as KeyVec;
 
 pub mod element;
@@ -998,7 +997,7 @@ pub trait InterpreterLikeBasicMut: InterpreterLike {
     /// - `element_id` is in scope `parent`.
     unsafe fn parse_value(
         &mut self,
-        source: NodeResult<'static, moss::Value<'static>>,
+        source: NodeResult<'static, moss_parser::Value<'static>>,
         element_id: Id<Element>,
         scope: &mut Scope,
     ) -> Option<Expr> {

@@ -746,14 +746,12 @@ dependencies = [
  "inturn",
  "lockfree",
  "log",
+ "moss-parser",
  "parking_lot",
  "slotmap",
  "smallvec",
  "strum",
  "tokio",
- "tree-sitter",
- "tree-sitter-moss",
- "type-sitter",
 ]
 
 [[package]]
@@ -778,6 +776,15 @@ dependencies = [
  "tree-sitter-moss",
  "type-sitter",
  "walkdir",
+]
+
+[[package]]
+name = "moss-parser"
+version = "0.1.0"
+dependencies = [
+ "tree-sitter",
+ "tree-sitter-moss",
+ "type-sitter",
 ]
 
 [[package]]

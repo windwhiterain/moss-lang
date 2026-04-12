@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use type_sitter::UntypedNode;
+use moss_parser::UntypedNode;
 
 use crate::{
     interpreter::{

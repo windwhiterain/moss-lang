@@ -1,7 +1,7 @@
 use std::{mem, sync::OnceLock};
 
 use enum_extract_macro::EnumExtract;
-use type_sitter::{Node, UntypedNode};
+use moss_parser::{Node, UntypedNode};
 
 use crate::{
     interpreter::{
