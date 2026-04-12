@@ -43,28 +43,25 @@ def run_as_admin():
     sys.exit()
 
 
-def link_to_home(path: Path):
-    home = get_home()
-
-    if not path.exists():
+def link(source: Path, target: Path):
+    if not source.exists():
         raise FileNotFoundError("build moss-lang first then install!")
 
-    if home.exists() or home.is_symlink():
-        unlink_to_home()
+    if target.exists() or target.is_symlink():
+        unlink(target)
 
-    home.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
 
-    os.symlink(path, home, target_is_directory=path.is_dir())
-    print(f"link: {path} => {home}")
+    os.symlink(source, target, target_is_directory=source.is_dir())
+    print(f"link: {source} => {target}")
 
 
-def unlink_to_home():
-    home = get_home()
-    if not home.exists() and not home.is_symlink():
-        print(f"link does not exists: {home}")
+def unlink(path):
+    if not path.exists() and not path.is_symlink():
+        print(f"link does not exists: {path}")
         return
-    os.rmdir(home)
-    print(f"unlink: {home}")
+    os.rmdir(path)
+    print(f"unlink: {path}")
 
 
 HWND_BROADCAST = 0xFFFF
@@ -136,15 +133,16 @@ if __name__ == "__main__":
     try:
         if not has_symlink_privilege():
             run_as_admin()
-        path = Path(__file__).parent / "target/debug"
+        binary_path = Path(__file__).parent / "target/debug"
+        home = get_home()
         if len(sys.argv) == 2:
-            remove_from_path(str(path))
-            unlink_to_home()
-            print(f"uninstalled moss at {path}")
+            remove_from_path(str(home))
+            unlink(home)
+            print(f"uninstalled moss at {home}")
         else:
-            add_to_path(str(path))
-            link_to_home(path)
-            print(f"installed moss at {path}")
+            link(binary_path, home)
+            add_to_path(str(home))
+            print(f"installed moss at {home}")
     except Exception as e:
         print(f"error: {e}")
     sleep(100)
