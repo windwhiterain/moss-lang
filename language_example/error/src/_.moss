@@ -1,20 +1,19 @@
-a = 1;
-error {location = @a; message = "should be 2";};
+a = 1
+error {location = @a; message = "should be 2";}
 
 check = param -> {
     e = switch {
-        index = equal [param, 2,];
+        index = equal [param, 2,]
         set = [
             error {
-                location = @param;
-                message = "should be 2";
+                location = @param
+                message = "should be 2"
             },
             (),
-        ];
-    };
+        ]
+    }
+}
 
-};
 
-
-e1 = (check 1).e;
-e2 = (check 2).e;
+e1 = (check 1).e
+e2 = (check 2).e

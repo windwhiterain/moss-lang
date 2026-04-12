@@ -1,3 +1,3 @@
-value_c = 1;
-a = mod "a";
-value2_c = a.value_a;
+value_c = 1
+a = mod "a"
+value2_c = a.value_a

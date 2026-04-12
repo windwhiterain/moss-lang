@@ -1,2 +1,2 @@
-b = mod "b";
-value_a = b.value_b;
+b = mod "b"
+value_a = b.value_b

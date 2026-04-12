@@ -1,22 +1,22 @@
 assert_key = param -> {
-    element = find {scope = param; key = "a";};
+    element = find {scope = param; key = "a";}
     _ = switch {index = equal [element, (),]; set = [
-        value_of element,
-        error { location = @param; message = "must has a";},
-    ];};
-};
+        value_of element
+        error { location = @param; message = "must has a";}
+    ];}
+}
 
-a = (assert_key {a = 2;})._;
-b = (assert_key {b = 2;})._;
+a = (assert_key {a = 2;})._
+b = (assert_key {b = 2;})._
 
 assert_type = param -> {
-    type = type_of param;
+    type = type_of param
     _ = switch {index = equal [type, Int,]; set = [
-        error { location = @param; message = "must be Int";},
-        with_type {value = param; type = Int;},
-    ];
-    };
-};
+        error { location = @param; message = "must be Int";}
+        with_type {value = param; type = Int;}
+    ]
+    }
+}
 
-c = (assert_type 1)._;
-d = (assert_type "1")._;
+c = (assert_type 1)._
+d = (assert_type "1")._

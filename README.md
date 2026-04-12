@@ -77,4 +77,10 @@ Moss-lang aims to be a meta-language to create DSL front-end with very advanced 
     ```
 5. install [zed extension](zed-extension) in Zed via `Extensins/Install Dev Extension`.
 6. restart Zed, open [example Moss project](language_example/_), diagnostics and inlay-hint should appear. 
+   ```
+   zed --foreground language_example/_
+   ```
 7. open more project inside [example Moss projects](language_example), note that a moss project is a folder with a `src` sub-folder.
+   ```
+   zed --foreground language_example/function/higher_order
+   ```
