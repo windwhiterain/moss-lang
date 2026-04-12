@@ -20,7 +20,7 @@ Moss-lang aims to be a meta-language to create DSL front-end with very advanced 
 ## Features
 - **language-server is interpreter, diagnostic is error value**
   
-    as long as you want language server to report and error, just return an error value.
+    as long as you want language-server to report an error, just return an error value.
 - **pure DAG (acyclic dependency graph) form**
     
     backend directly get a DAG with fully resolved symbols.
